@@ -1,0 +1,31 @@
+:root {
+   --color-bg: #ffffff;
+   --color-fg: #1a1a1a;
+   --color-muted: #6b7280;
+   --color-border: #e5e7eb;
+   --color-accent: #2563eb;
+   --color-danger: #dc2626;
+   --color-highlight: #fef3c7;
+   --radius: 6px;
+   --font-sans: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
+
+button,
+input {
+  font: inherit;
+}
