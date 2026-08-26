@@ -11,7 +11,7 @@ export type TranscribeHandlerDeps = {
   maxBytes?: number;
 };
 
-const DEFAULT_MAX_BYTES = 8 * 1024 * 1024;
+const DEFAULT_MAX_BYTES = 12 * 1024 * 1024;
 const DEFAULT_WAIT_TIMEOUT_MS = 60_000;
 
 const isWav = (bytes: Uint8Array): boolean =>

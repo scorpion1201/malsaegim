@@ -14,7 +14,7 @@ export const readAsrConfig = (env: NodeJS.ProcessEnv = process.env): AsrConfig =
   const maxConcurrency = Number(env.ASR_MAX_CONCURRENCY ?? 8);
   return {
     apiKey,
-    baseUrl: env.ASR_BASE_URL ?? 'https://api.example.com/compatible-mode/v1',
+    baseUrl: env.ASR_BASE_URL ?? 'https://token-plan.ap-southeast-1.maas.example.com',
     model: env.ASR_MODEL ?? 'whisper-1',
     language: env.ASR_LANGUAGE ?? 'ko',
     maxConcurrency: Number.isFinite(maxConcurrency) && maxConcurrency > 0 ? maxConcurrency : 8,

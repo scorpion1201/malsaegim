@@ -1,0 +1,232 @@
+.main {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 24px 16px 48px;
+  display: grid;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.title {
+  margin: 0;
+  font-size: 20px;
+}
+
+.uploader {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.fileInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.uploaderButton {
+  padding: 6px 12px;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.fileName {
+  color: var(--color-muted);
+  font-size: 14px;
+}
+
+
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.progressBar {
+  flex: 1;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--color-border);
+  overflow: hidden;
+}
+
+.progressFill,
+.progressFillError {
+  height: 100%;
+  background: var(--color-accent);
+  transition: width 0.2s;
+}
+
+.progressFillError {
+  background: var(--color-danger);
+}
+
+.progressLabel {
+  font-size: 14px;
+  color: var(--color-muted);
+  min-width: 160px;
+}
+
+.cancel {
+  padding: 4px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fff;
+  cursor: pointer;
+}
+
+.player {
+  padding: 8px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.editor {
+  min-height: 60vh;
+}
+
+.exportBar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.titleLabel {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  font-size: 14px;
+  color: var(--color-muted);
+}
+
+.titleInput {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.exportButton {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.exportButton:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.exportError {
+  color: var(--color-danger);
+  font-size: 14px;
+}
+.projectPanel {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0;
+}
+
+.projectSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 14px;
+  list-style: none;
+}
+
+.projectImport {
+  display: inline-flex;
+}
+
+.projectEmpty {
+  margin: 0;
+  padding: 0 12px 10px;
+  color: var(--color-muted);
+  font-size: 13px;
+}
+
+.projectList {
+  margin: 0;
+  padding: 0 8px 8px;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.projectRow,
+.projectRowActive {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+}
+
+.projectRowActive {
+  background: var(--color-highlight);
+}
+
+.projectInfo {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.projectTitle {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.projectMetaLine {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.projectActions {
+  display: inline-flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.projectAction,
+.projectActionDanger {
+  padding: 3px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.projectActionDanger {
+  color: var(--color-danger);
+}
+
+.projectAction:disabled,
+.projectActionDanger:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

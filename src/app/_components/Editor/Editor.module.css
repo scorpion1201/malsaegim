@@ -1,0 +1,89 @@
+.editor {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+}
+
+.placeholder {
+  padding: 16px;
+  color: var(--color-muted);
+}
+
+.toolbar {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--color-border);
+  flex-wrap: wrap;
+}
+
+.tool,
+.toolActive {
+  min-width: 32px;
+  padding: 4px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: #fff;
+  cursor: pointer;
+}
+
+.toolActive {
+  background: var(--color-accent);
+  color: #fff;
+  border-color: var(--color-accent);
+}
+
+.tool:disabled,
+.toolActive:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.separator {
+  width: 1px;
+  margin: 0 4px;
+  background: var(--color-border);
+}
+
+.content {
+  flex: 1;
+  padding: 16px 20px;
+  line-height: 1.7;
+  overflow: auto;
+}
+
+.content :global(.tiptap) {
+  outline: none;
+  min-height: 50vh;
+}
+
+.content :global(.tiptap p) {
+  margin: 0 0 0.6em;
+}
+
+.timestampWrapper {
+  display: inline;
+}
+
+.timestamp {
+  border: 0;
+  padding: 0 4px;
+  margin-right: 4px;
+  border-radius: 3px;
+  background: var(--color-highlight);
+  color: var(--color-muted);
+  font-size: 0.85em;
+  cursor: pointer;
+  user-select: none;
+}
+
+.timestampActive {
+  background: var(--color-accent);
+  color: #fff;
+}
+
+.hideTimestamps .timestampWrapper {
+  display: none;
+}

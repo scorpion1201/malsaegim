@@ -1,0 +1,26 @@
+.player {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.audio {
+  flex: 1;
+  min-width: 240px;
+}
+
+.time {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-muted);
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--color-muted);
+}
+
+.empty {
+  color: var(--color-muted);
+  font-size: 14px;
+}

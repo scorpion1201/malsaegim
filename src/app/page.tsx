@@ -1,3 +1,5 @@
-const Home = () => <main>ASR → HWP</main>;
+import { TranscribeWorkspace } from './_components/Workspace/TranscribeWorkspace';
+
+const Home = () => <TranscribeWorkspace />;
 
 export default Home;
