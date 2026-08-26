@@ -1,0 +1,106 @@
+.bar {
+  height: 64px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--danger);
+  color: #ffffff;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 104px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+.dot,
+.dotPaused {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot {
+  background: var(--danger);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.dotPaused {
+  background: var(--muted);
+}
+
+.pausedLabel {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wave {
+  display: block;
+  flex: 1;
+  min-width: 0;
+  height: 24px;
+}
+
+.quiet,
+.save {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: var(--radius);
+  border: 0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.quiet {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.quiet:hover {
+  background: var(--border);
+}
+
+.save {
+  padding: 0 14px;
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}

@@ -1,0 +1,171 @@
+export type MicCapture = {
+  /** 실제 AudioContext 샘플레이트 — 16000 이 아니면 호출자가 리샘플한다 */
+  sampleRate: number;
+  pause: () => void;
+  resume: () => void;
+  stop: () => Promise<void>;
+};
+
+/** 워크릿 프로세서: 입력 채널 0 을 1600 샘플(16kHz 기준 100ms)씩 모아 메인 스레드로 보낸다 */
+const WORKLET_SOURCE = `
+class PcmCaptureProcessor extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.buffer = new Float32Array(1600);
+    this.fill = 0;
+  }
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel) return true;
+    let offset = 0;
+    while (offset < channel.length) {
+      const take = Math.min(channel.length - offset, this.buffer.length - this.fill);
+      this.buffer.set(channel.subarray(offset, offset + take), this.fill);
+      this.fill += take;
+      offset += take;
+      if (this.fill === this.buffer.length) {
+        this.port.postMessage(this.buffer, [this.buffer.buffer]);
+        this.buffer = new Float32Array(1600);
+        this.fill = 0;
+      }
+    }
+    return true;
+  }
+}
+registerProcessor('pcm-capture', PcmCaptureProcessor);
+`;
+
+/** 선형 보간 리샘플 (한 번짜리) — 16kHz 컨텍스트를 못 만드는 브라우저용 대비책 */
+export const resampleLinear = (input: Float32Array, fromRate: number, toRate: number): Float32Array => {
+  if (fromRate === toRate) return input;
+  const ratio = fromRate / toRate;
+  const out = new Float32Array(Math.floor(input.length / ratio));
+  for (let i = 0; i < out.length; i += 1) {
+    const position = i * ratio;
+    const index = Math.floor(position);
+    const next = Math.min(index + 1, input.length - 1);
+    const t = position - index;
+    out[i] = input[index] * (1 - t) + input[next] * t;
+  }
+  return out;
+};
+
+/**
+ * 연속(상태 유지) 선형 리샘플러. 블록마다 소수 위치와 직전 샘플을 이어받아 경계에서 샘플이 빠지거나
+ * 위상이 튀지 않는다 — 실시간 마이크 스트림을 끊김 없이 16kHz 로 내리는 데 쓴다.
+ */
+export const createResampler = (fromRate: number, toRate: number): ((input: Float32Array) => Float32Array) => {
+  if (fromRate === toRate) return (input) => input;
+  const ratio = fromRate / toRate;
+  let pos = 0; // 가상 배열 [prev, ...input] 기준 읽기 위치
+  let prev = 0; // 직전 블록의 마지막 샘플 (가상 인덱스 0)
+  return (input: Float32Array): Float32Array => {
+    if (input.length === 0) return input;
+    const out: number[] = [];
+    const at = (idx: number): number => (idx === 0 ? prev : input[idx - 1]);
+    const vlen = input.length + 1;
+    while (pos + 1 < vlen) {
+      const i = Math.floor(pos);
+      const t = pos - i;
+      out.push(at(i) * (1 - t) + at(i + 1) * t);
+      pos += ratio;
+    }
+    pos -= input.length; // 다음 블록의 가상 인덱스 0 = 이번 블록 마지막 샘플
+    prev = input[input.length - 1];
+    return Float32Array.from(out);
+  };
+};
+
+// 강제 16kHz 컨텍스트 + 하드웨어 48kHz 마이크를 물리면 브라우저 내부 리샘플에서 주기적 언더런(씹힘)이 난다.
+// 하드웨어(네이티브) 레이트로 그대로 받고, 16kHz 로는 JS 에서 연속 리샘플로 내린다.
+const createContext = (): AudioContext => new AudioContext();
+
+const OUTPUT_SAMPLE_RATE = 16000;
+/** 워커로 넘길 프레임 크기 — 100ms(16kHz). 잘게 넘기면 malloc/ccall/디코드 호출 오버헤드가 커져 실시간을 못 따라간다 */
+const OUTPUT_FRAME = 1600;
+
+/** 마이크 → Float32 샘플 콜백. AudioWorklet 을 못 쓰는 브라우저는 ScriptProcessor 로 대체한다 */
+export const startMicCapture = async (onSamples: (samples: Float32Array) => void): Promise<MicCapture> => {
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('이 브라우저나 주소에서는 마이크를 쓸 수 없습니다 (HTTPS 또는 localhost 필요)');
+  }
+  // 에코 제거는 끈다: 이 앱은 녹음 중 소리를 내지 않는데, OS 의 에코 제거가 스피커로 나오는
+  // 다른 사람 목소리(회의 스피커폰 등)를 "에코"로 보고 몇 초 뒤부터 지워 버린다.
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
+  });
+  const context = createContext();
+  await context.resume();
+  const source = context.createMediaStreamSource(stream);
+  // 출력은 내지 않지만 그래프가 돌게 하려고 0 게인으로 destination 에 잇는다
+  const sink = context.createGain();
+  sink.gain.value = 0;
+  let paused = false;
+  // 네이티브 레이트 → 16kHz 연속 리샘플 (호출자는 항상 16kHz 를 받는다)
+  const resample = createResampler(context.sampleRate, OUTPUT_SAMPLE_RATE);
+  // 리샘플 출력을 100ms 프레임으로 모아서 넘긴다 (워커 호출 빈도를 낮춰 실시간 유지)
+  let acc = new Float32Array(0);
+  const deliver = (samples: Float32Array) => {
+    if (paused) return;
+    const out = resample(samples);
+    if (out.length === 0) return;
+    const merged = new Float32Array(acc.length + out.length);
+    merged.set(acc);
+    merged.set(out, acc.length);
+    let off = 0;
+    while (merged.length - off >= OUTPUT_FRAME) {
+      onSamples(merged.slice(off, off + OUTPUT_FRAME));
+      off += OUTPUT_FRAME;
+    }
+    acc = merged.slice(off);
+  };
+
+  let node: AudioNode;
+  if (context.audioWorklet) {
+    const url = URL.createObjectURL(new Blob([WORKLET_SOURCE], { type: 'application/javascript' }));
+    try {
+      await context.audioWorklet.addModule(url);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+    const worklet = new AudioWorkletNode(context, 'pcm-capture', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      channelCount: 1,
+    });
+    worklet.port.onmessage = (event: MessageEvent<Float32Array>) => deliver(event.data);
+    node = worklet;
+  } else {
+    const processor = context.createScriptProcessor(4096, 1, 1);
+    processor.onaudioprocess = (event) => deliver(new Float32Array(event.inputBuffer.getChannelData(0)));
+    node = processor;
+  }
+  source.connect(node);
+  node.connect(sink);
+  sink.connect(context.destination);
+
+  return {
+    // 호출자가 받는 샘플은 이미 16kHz (내부에서 네이티브→16kHz 리샘플했다)
+    sampleRate: OUTPUT_SAMPLE_RATE,
+    pause: () => {
+      paused = true;
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = false;
+      });
+    },
+    resume: () => {
+      stream.getAudioTracks().forEach((track) => {
+        track.enabled = true;
+      });
+      paused = false;
+    },
+    stop: async () => {
+      paused = true;
+      source.disconnect();
+      node.disconnect();
+      sink.disconnect();
+      stream.getTracks().forEach((track) => track.stop());
+      await context.close();
+    },
+  };
+};

@@ -81,6 +81,10 @@ export const transcribeWav = async ({
     });
 
     const payload = (await response.json().catch(() => ({}))) as AsrResponse;
+    // 말소리가 없는 조각(무음·잡음뿐)에는 ASR 가 본문 없는 400 을 돌려준다 — 진짜 요청 오류는 code/message 가 있다
+    if (response.status === 400 && payload.code === undefined && payload.message === undefined) {
+      return { text: '', seconds: null };
+    }
     if (!response.ok) {
       const message = typeof payload.message === 'string' ? payload.message : `HTTP ${response.status}`;
       throw new AsrHttpError(response.status, message);

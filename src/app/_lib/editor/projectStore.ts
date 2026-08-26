@@ -10,11 +10,16 @@ export type StoredChunk = {
   status: ChunkStatus;
 };
 
+export type ProjectAudioKind = 'file' | 'recording';
+
 export type ProjectAudio = {
   name: string;
   size: number;
   sha256: string;
   durationMs: number;
+  /** 없으면 'file' (예전 노트). 'recording' 은 WAV 원본이 IndexedDB(recordings) 에 있다 */
+  kind?: ProjectAudioKind;
+  mimeType?: string;
 };
 
 export type Project = {
@@ -22,7 +27,7 @@ export type Project = {
   title: string;
   createdAt: number;
   updatedAt: number;
-  /** 텍스트만 저장한다 — 오디오 원본은 저장하지 않고 재선택 시 sha256 으로 동일성만 확인 */
+  /** localStorage 에는 텍스트만 — 파일 노트는 재선택 시 sha256 으로 동일성만 확인하고, 녹음 노트는 WAV 를 IndexedDB 에 둔다 */
   audio: ProjectAudio | null;
   /** 최초 인식에 쓴 분할 옵션 (참고용 — 재인식은 chunks 의 시간 구간을 정본으로 쓴다) */
   splitOptions: SplitOptions | null;
@@ -37,6 +42,9 @@ export type ProjectMeta = {
   totalChunks: number;
   failedCount: number;
   audioName: string | null;
+  /** 예전 목록 항목에는 없을 수 있다 — 없으면 'file' 로 본다 */
+  kind?: 'file' | 'recording' | 'text';
+  durationMs?: number | null;
 };
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
@@ -72,6 +80,9 @@ const isProject = (value: unknown): value is Project => {
   );
 };
 
+export const audioKindOf = (audio: ProjectAudio | null | undefined): 'file' | 'recording' | 'text' =>
+  audio ? (audio.kind ?? 'file') : 'text';
+
 export const toMeta = (project: Project): ProjectMeta => ({
   id: project.id,
   title: project.title,
@@ -79,6 +90,8 @@ export const toMeta = (project: Project): ProjectMeta => ({
   totalChunks: project.chunks.length,
   failedCount: project.chunks.filter((chunk) => chunk.status === 'failed').length,
   audioName: project.audio?.name ?? null,
+  kind: audioKindOf(project.audio),
+  durationMs: project.audio?.durationMs ?? null,
 });
 
 const readIndex = (storage: StorageLike): ProjectMeta[] => {
@@ -139,7 +152,7 @@ export const deleteProject = (storage: StorageLike, id: string): void => {
 
 export const newProjectId = (): string => crypto.randomUUID();
 
-/** 예전 단일 초안(malsaegim:draft)을 프로젝트 하나로 옮긴다. 프로젝트가 이미 있으면 건드리지 않는다. */
+/** 예전 단일 초안(malsaegim:draft)을 노트 하나로 옮긴다. 노트가 이미 있으면 건드리지 않는다. */
 export const migrateLegacyDraft = (storage: StorageLike): void => {
   try {
     const raw = storage.getItem(LEGACY_DRAFT_KEY);
@@ -165,7 +178,7 @@ export const migrateLegacyDraft = (storage: StorageLike): void => {
   }
 };
 
-/** 내보내기: 프로젝트 1개 = JSON 파일 1개 */
+/** 내보내기: 노트 1개 = JSON 파일 1개 (녹음 원본은 포함하지 않는다) */
 export const serializeProject = (project: Project): string => JSON.stringify(project, null, 2);
 
 /** 가져오기: 검증 후 새 id 로 복제 (파일 출처와 무관하게 로컬 목록에서 유일하게) */

@@ -4,6 +4,7 @@ import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { useEffect, useMemo, useRef } from 'react';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
+import { formatTimestamp } from '@/app/_lib/time';
 import styles from './Editor.module.css';
 import { FailedChunkNode, RETRY_EVENT, type RetryEventDetail } from './FailedChunkNode';
 import { SEEK_EVENT, TimestampNode, type SeekEventDetail } from './TimestampNode';
@@ -19,6 +20,8 @@ export type EditorProps = {
   onSeek: (ms: number) => void;
   onRetryChunk: (startMs: number, endMs: number) => void;
   onToggleTimestamps: () => void;
+  /** 녹음 중: 본문 아래에 "다음 조각 시작 시각 + 상태" 줄을 깜박이는 커서와 함께 보여준다 */
+  live?: { startMs: number; label: string } | null;
 };
 
 export const Editor = ({
@@ -31,6 +34,7 @@ export const Editor = ({
   onSeek,
   onRetryChunk,
   onToggleTimestamps,
+  live = null,
 }: EditorProps) => {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -117,7 +121,18 @@ export const Editor = ({
         statusLabel={statusLabel}
       />
       <div className={styles.divider} />
-      <EditorContent editor={editor} className={styles.content} />
+      <div className={styles.scroll}>
+        <EditorContent editor={editor} className={styles.content} />
+        {live ? (
+          <p className={styles.liveRow} aria-live="polite">
+            <span className={styles.liveChip}>{formatTimestamp(live.startMs)}</span>
+            <span className={styles.liveText}>
+              {live.label}
+              <span className={styles.caret} />
+            </span>
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 };

@@ -1,0 +1,74 @@
+.menu,
+.menuRight {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 168px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-toast);
+}
+
+.menu {
+  left: 0;
+}
+
+.menuRight {
+  right: 0;
+}
+
+.item,
+.itemDanger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.itemDanger {
+  color: var(--danger);
+}
+
+.item:hover {
+  background: var(--surface-2);
+}
+
+/* 삭제 같은 위험 항목은 호버 시 연한 빨간 배경 */
+.itemDanger:hover {
+  background: var(--danger-soft);
+}
+
+.item:disabled,
+.itemDanger:disabled {
+  color: var(--muted);
+  background: transparent;
+  cursor: default;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+}
+
+.separator {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--divider);
+}

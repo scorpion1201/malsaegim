@@ -9,7 +9,8 @@ export type PlayerBarHandle = {
 };
 
 type PlayerBarProps = {
-  file: File | null;
+  /** 재생 소스 — 불러온 파일(File) 또는 IndexedDB 의 녹음 WAV(Blob) */
+  source: Blob | null;
   durationMs: number | null;
   onTimeUpdate: (ms: number) => void;
 };
@@ -28,7 +29,7 @@ const shouldIgnoreKey = (target: EventTarget | null): boolean => {
   );
 };
 
-export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ file, durationMs, onTimeUpdate }, ref) => {
+export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ source, durationMs, onTimeUpdate }, ref) => {
   const audioRef = useRef<HTMLAudioElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -37,19 +38,19 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ file, du
 
   // object URL 은 effect 안에서 만들고 같은 effect 의 cleanup 에서 해제한다 (StrictMode 안전)
   useEffect(() => {
-    if (!file) {
+    if (!source) {
       setUrl(null);
       setPlaying(false);
       setCurrentMs(0);
       setMediaDurationMs(null);
       return;
     }
-    const objectUrl = URL.createObjectURL(file);
+    const objectUrl = URL.createObjectURL(source);
     setUrl(objectUrl);
     setPlaying(false);
     setCurrentMs(0);
     return () => URL.revokeObjectURL(objectUrl);
-  }, [file]);
+  }, [source]);
 
   useImperativeHandle(ref, () => ({
     seekTo: (ms) => {
@@ -101,7 +102,10 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ file, du
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
           onEnded={() => setPlaying(false)}
-          onLoadedMetadata={(event) => setMediaDurationMs(event.currentTarget.duration * 1000)}
+          onLoadedMetadata={(event) => {
+            const seconds = event.currentTarget.duration;
+            setMediaDurationMs(Number.isFinite(seconds) ? seconds * 1000 : null);
+          }}
           onTimeUpdate={(event) => {
             const ms = event.currentTarget.currentTime * 1000;
             setCurrentMs(ms);
@@ -150,7 +154,7 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ file, du
           }}
         />
       </div>
-      <span className={styles.hint}>{url ? 'Space 재생·정지 · ←/→ 5초 이동' : '오디오를 불러오면 여기서 재생할 수 있습니다'}</span>
+      <span className={styles.hint}>{url ? 'Space 재생·정지 · ←/→ 5초 이동' : '오디오를 불러오거나 녹음하면 여기서 재생할 수 있습니다'}</span>
     </div>
   );
 });

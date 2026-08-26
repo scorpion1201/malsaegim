@@ -76,7 +76,7 @@ export const createTranscribeHandler =
        } catch (error) {
        if (error instanceof AsrHttpError) {
          const status = error.status === 429 ? 429 : 502;
-         return Response.json({ error: `음성 인식 실패 (${error.status})` }, { status });
+         return Response.json({ error: `음성 인식 실패 (${error.status}): ${error.message}` }, { status });
          }
        const message = error instanceof Error ? error.message : 'unknown error';
        return Response.json({ error: `음성 인식 실패: ${message}` }, { status: 502 });

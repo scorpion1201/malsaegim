@@ -28,6 +28,7 @@ COPY package.json .yarnrc.yml ./
 RUN yarn install
 COPY tsconfig.json next.config.ts ./
 COPY src ./src
+COPY public ./public
 COPY --from=wasm /build/pkg ./src/app/_lib/audio/pkg
 # package.json's `build` rebuilds the wasm (no cargo here), so run next build directly
 RUN yarn next build
@@ -48,6 +49,8 @@ RUN (grep -q ':80:' /etc/group || addgroup -g 80 admin) \
 # standalone output contains server.js and only the traced node_modules (incl. @rhwp/core wasm)
 COPY --from=build --chown=malsaegim:admin /app/.next/standalone ./
 COPY --from=build --chown=malsaegim:admin /app/.next/static ./.next/static
+# Standalone output does not include public/ — copy it next to server.js
+COPY --from=build --chown=malsaegim:admin /app/public ./public
 
 USER malsaegim
 

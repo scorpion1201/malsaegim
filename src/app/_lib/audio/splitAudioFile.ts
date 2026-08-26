@@ -47,7 +47,7 @@ const runWorker = (request: SplitterRequest, onChunk: (chunk: AudioChunk) => voi
   return { done, cancel };
 };
 
-/** 새 프로젝트: 무음 경계 분할 후 전 조각을 순서대로 방출 */
+/** 새 노트: 무음 경계 분할 후 전 조각을 순서대로 방출 */
 export const splitAudioBuffer = (
   buffer: ArrayBuffer,
   onChunk: (chunk: AudioChunk) => void,
