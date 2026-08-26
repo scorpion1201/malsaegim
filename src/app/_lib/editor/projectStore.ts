@@ -1,4 +1,5 @@
 import type { SplitOptions } from '@/app/_lib/audio/types';
+import type { PageLayout } from '@/app/_lib/hwp/pageLayout';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 
 export type ChunkStatus = 'ok' | 'failed';
@@ -33,6 +34,8 @@ export type Project = {
   splitOptions: SplitOptions | null;
   chunks: StoredChunk[];
   doc: TiptapDoc;
+  /** 문서 레이아웃 — 없으면 기본 편집 용지(A4 세로). 내보낼 때 normalizePageLayout 으로 메운다 */
+  layout?: PageLayout;
 };
 
 export type ProjectMeta = {

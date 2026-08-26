@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Sans_KR } from 'next/font/google';
+import { DialogProvider } from './_components/Dialog/DialogProvider';
 import { ToastProvider } from './_components/Toast/ToastProvider';
 import { THEME_INIT_SCRIPT } from './_lib/theme';
 import './globals.css';
@@ -23,7 +24,9 @@ const RootLayout = ({ children }: LayoutProps<'/'>) => (
       <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
     </head>
     <body>
-      <ToastProvider>{children}</ToastProvider>
+      <ToastProvider>
+        <DialogProvider>{children}</DialogProvider>
+      </ToastProvider>
     </body>
   </html>
 );

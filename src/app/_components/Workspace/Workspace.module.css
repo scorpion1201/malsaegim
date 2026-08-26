@@ -137,6 +137,30 @@
   margin-left: 8px;
 }
 
+/* 상단 바 맨 오른쪽 설정(톱니) — 설정 페이지에서는 눌린 상태 */
+.gearButton,
+.gearButtonActive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius);
+  color: var(--fg-2);
+  text-decoration: none;
+  flex-shrink: 0;
+}
+
+.gearButton:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.gearButtonActive {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .secondaryButton,
 .primaryButton {
   display: flex;
@@ -455,10 +479,19 @@
 .main {
   flex: 1;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-width: 0;
   min-height: 0;
   background: var(--surface);
+}
+
+/* 에디터(또는 빈 화면) 칼럼 — 오른쪽 레이아웃 패널이 열리면 그만큼 좁아진다 */
+.editorColumn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 /* ---------- 빈 상태 ---------- */

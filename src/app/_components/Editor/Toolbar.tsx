@@ -8,6 +8,10 @@ type ToolbarProps = {
   showTimestamps: boolean;
   onToggleTimestamps: () => void;
   statusLabel: string;
+  /** 문서 레이아웃 패널 열림 상태 — 오른쪽 메타 영역의 용지 아이콘 */
+  layoutOpen: boolean;
+  layoutDisabled: boolean;
+  onToggleLayout: () => void;
 };
 
 const BulletIcon = () => (
@@ -27,6 +31,14 @@ const OrderedIcon = () => (
   </svg>
 );
 
+const PageIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M7 3h7l5 5v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z" />
+    <path d="M14 3v5h5" />
+    <path d="M9 13h6M9 17h6" />
+  </svg>
+);
+
 const ClockIcon = () => (
   <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <circle cx="12" cy="12" r="9" />
@@ -34,7 +46,15 @@ const ClockIcon = () => (
   </svg>
 );
 
-export const Toolbar = ({ editor, showTimestamps, onToggleTimestamps, statusLabel }: ToolbarProps) => {
+export const Toolbar = ({
+  editor,
+  showTimestamps,
+  onToggleTimestamps,
+  statusLabel,
+  layoutOpen,
+  layoutDisabled,
+  onToggleLayout,
+}: ToolbarProps) => {
   const state = useEditorState({
     editor,
     selector: ({ editor: e }) => ({
@@ -127,6 +147,19 @@ export const Toolbar = ({ editor, showTimestamps, onToggleTimestamps, statusLabe
         </button>
       </div>
       <div className={styles.toolbarMeta}>
+        <button
+          type="button"
+          className={layoutOpen ? styles.toolActive : styles.tool}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onToggleLayout}
+          disabled={layoutDisabled}
+          aria-pressed={layoutOpen}
+          aria-label="문서 레이아웃"
+          data-tooltip="문서 레이아웃"
+        >
+          <PageIcon />
+        </button>
+        <span className={styles.separator} />
         <span>{state.characters.toLocaleString('ko-KR')}자</span>
         <span className={styles.separator} />
         <span>{statusLabel}</span>

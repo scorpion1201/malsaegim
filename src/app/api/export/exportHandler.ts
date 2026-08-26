@@ -1,6 +1,7 @@
 import 'server-only';
 import { DocModelError, type ExportFormat } from '@/app/_lib/hwp/docModel';
 import { buildDocument } from '@/app/_lib/hwp/docModelToRhwp';
+import { normalizePageLayout } from '@/app/_lib/hwp/pageLayout';
 import type { RhwpEngine } from '@/app/_lib/hwp/rhwpEngine';
 import { tiptapToDocModel, type TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 
@@ -29,7 +30,7 @@ export const createExportHandler =
      if (raw.length > MAX_BODY_BYTES) {
        return Response.json({ error: '본문이 너무 큽니다' }, { status: 413 });
        }
-     let body: { format?: unknown; title?: unknown; doc?: unknown };
+     let body: { format?: unknown; title?: unknown; doc?: unknown; layout?: unknown };
      try {
        body = JSON.parse(raw) as typeof body;
        } catch {
@@ -44,7 +45,8 @@ export const createExportHandler =
      const startedAt = Date.now();
      try {
        const model = tiptapToDocModel(body.doc, title);
-       bytes = buildDocument(model, engine, body.format);
+       // layout 이 없거나 깨져 있으면 기본 편집 용지(A4 세로)로 만든다
+       bytes = buildDocument(model, engine, body.format, normalizePageLayout(body.layout));
        console.info(`[export] ${body.format} blocks=${model.blocks.length} ms=${Date.now() - startedAt}`);
        } catch (error) {
        if (error instanceof DocModelError) {

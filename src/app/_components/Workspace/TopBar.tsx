@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
+import { GearIcon } from './GearIcon';
 import styles from './Workspace.module.css';
 
 type TopBarProps = {
@@ -103,7 +104,7 @@ export const TopBar = ({
           className={styles.secondaryButton}
           disabled={exportDisabled || busy !== null}
           onClick={() => void run('hwp')}
-          data-tooltip="HWP 5.0 문서로 저장"
+          data-tooltip="HWP 문서로 저장"
         >
           {busy === 'hwp' ? '생성 중…' : 'HWP'}
         </button>
@@ -122,6 +123,9 @@ export const TopBar = ({
         <div className={styles.themeSlot}>
           <ThemeToggle />
         </div>
+        <Link href="/settings" className={styles.gearButton} aria-label="설정" data-tooltip="설정">
+          <GearIcon />
+        </Link>
       </div>
     </header>
   );

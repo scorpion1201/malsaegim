@@ -1,0 +1,138 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.dialog {
+  width: 420px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 20px 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: var(--shadow-toast);
+  animation: dialog-in 0.2s ease-out;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.icon,
+.iconDanger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+}
+
+.icon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.iconDanger {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  word-break: keep-all;
+}
+
+.title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.description {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--fg-2);
+}
+
+.warning {
+  font-size: 13px;
+  line-height: 1.6;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.cancel,
+.confirm,
+.confirmDanger {
+  height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--radius);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.cancel {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.cancel:hover {
+  background: var(--border);
+}
+
+.confirm,
+.confirmDanger {
+  padding: 0 16px;
+  color: #ffffff;
+}
+
+.confirm {
+  background: var(--accent);
+}
+
+.confirmDanger {
+  background: var(--danger);
+}
+
+.confirm:focus-visible,
+.confirmDanger:focus-visible,
+.cancel:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}

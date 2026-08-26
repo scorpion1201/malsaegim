@@ -1,5 +1,6 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assembleTranscript, type ChunkMeta, type ChunkOutcome } from '@/app/_lib/asr/assembleTranscript';
 import { CLIENT_CONCURRENCY, createTranscribeQueue, type TranscribeQueue } from '@/app/_lib/asr/transcribeQueue';
@@ -27,11 +28,15 @@ import {
   type StoredChunk,
 } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
+import { normalizePageLayout, type PageLayout } from '@/app/_lib/hwp/pageLayout';
+import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { Editor } from '../Editor/Editor';
+import { LayoutPanel } from '../LayoutPanel/LayoutPanel';
 import { PlayerBar, type PlayerBarHandle } from '../PlayerBar/PlayerBar';
 import { RecordingBar } from '../RecordingBar/RecordingBar';
+import { useDialog } from '../Dialog/DialogProvider';
 import { useToast } from '../Toast/ToastProvider';
 import { Sidebar, type SidebarHandle } from './Sidebar';
 import { TopBar } from './TopBar';
@@ -88,6 +93,8 @@ const LIVE_PARAGRAPH_MS = 25_000;
 
 export const TranscribeWorkspace = () => {
   const toast = useToast();
+  const dialog = useDialog();
+  const router = useRouter();
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [mode, setMode] = useState<RunMode>('new');
@@ -105,6 +112,7 @@ export const TranscribeWorkspace = () => {
   const [retryDone, setRetryDone] = useState(0);
   const [retryTotal, setRetryTotal] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [layoutOpen, setLayoutOpen] = useState(false);
 
   const playerRef = useRef<PlayerBarHandle>(null);
   const sidebarRef = useRef<SidebarHandle>(null);
@@ -279,6 +287,19 @@ export const TranscribeWorkspace = () => {
     [stop, toast],
   );
 
+  /** 서버는 프록시일 뿐이라 설정 페이지의 API 설정이 없으면 인식을 시작할 수 없다 */
+  const requireByok = useCallback((): boolean => {
+    if (isByokComplete(readByokSettings())) return true;
+    toast.show({
+      kind: 'error',
+      title: '음성 인식 API 가 설정되지 않았습니다',
+      description: '설정에서 API Base URL · API Key · 모델 이름을 저장한 뒤 다시 시도하세요.',
+      duration: 8000,
+      actions: [{ label: '설정 열기', primary: true, onClick: () => router.push('/settings') }],
+    });
+    return false;
+  }, [toast, router]);
+
   const makeQueue = useCallback(
     (onOutcome: (outcome: ChunkOutcome) => void) =>
       createTranscribeQueue(
@@ -291,6 +312,7 @@ export const TranscribeWorkspace = () => {
   /** 새 노트: 무음 분할 → 전 조각 인식 */
   const beginNew = useCallback(
     (selected: File, buffer: ArrayBuffer, sha256: string) => {
+      if (!requireByok()) return;
       stop();
       setMode('new');
       setActive(null);
@@ -344,12 +366,13 @@ export const TranscribeWorkspace = () => {
         })
         .catch(failWith);
     },
-    [stop, setActive, setDoc, makeQueue, failWith, toast],
+    [stop, setActive, setDoc, makeQueue, failWith, toast, requireByok],
   );
 
   /** 재인식: 저장된 시간 구간만 추출해 실패 조각만 다시 보낸다 */
   const beginRetry = useCallback(
     (extract: RangeExtractor, failed: StoredChunk[], project: Project) => {
+      if (!requireByok()) return;
       stop();
       setMode('retry');
       setRetryDone(0);
@@ -421,7 +444,7 @@ export const TranscribeWorkspace = () => {
         })
         .catch(failWith);
     },
-    [stop, makeQueue, setActive, persist, failWith, toast],
+    [stop, makeQueue, setActive, persist, failWith, toast, requireByok],
   );
 
   /** 파일 선택: 같은 오디오면 재생 연결·부분 재인식, 다른 파일이면 새 노트 */
@@ -468,13 +491,17 @@ export const TranscribeWorkspace = () => {
         }
 
         if (active) {
-          const proceed = window.confirm('열려 있는 노트와 다른 파일입니다. 새 노트로 시작할까요?');
+          const proceed = await dialog.confirm({
+            title: '열려 있는 노트와 다른 파일입니다',
+            description: '새 노트로 시작할까요? 지금 열린 노트는 그대로 남습니다.',
+            confirmLabel: '새 노트로 시작',
+          });
           if (!proceed) return;
         }
         beginNew(selected, buffer, sha256);
       })().catch(failWith);
     },
-    [beginNew, beginRetry, failWith, toast],
+    [beginNew, beginRetry, failWith, toast, dialog],
   );
 
   /** 에디터의 실패 조각 새로고침: 오디오가 연결돼 있으면 바로, 아니면 파일 선택부터 */
@@ -566,15 +593,27 @@ export const TranscribeWorkspace = () => {
 
   const removeProject = useCallback(
     (id: string) => {
-      if (!window.confirm('노트를 삭제할까요? 되돌릴 수 없습니다.')) return;
-      deleteProject(window.localStorage, id);
+      void (async () => {
+        const target = loadProject(window.localStorage, id);
+        const hasAudio = audioKindOf(target?.audio) !== 'text';
+        const name = target?.title.trim() || '(제목 없음)';
+        const proceed = await dialog.confirm({
+          kind: 'danger',
+          title: '노트를 삭제할까요?',
+          description: hasAudio ? `‘${name}’ 와 저장된 오디오 원본이 함께 지워집니다.` : `‘${name}’ 이(가) 지워집니다.`,
+          warning: '이 작업은 되돌릴 수 없습니다.',
+          confirmLabel: '삭제',
+        });
+        if (!proceed) return;
+        deleteProject(window.localStorage, id);
       void deleteRecording(id).catch(() => {});
       void deleteRecordingParts(id).catch(() => {});
-      refreshProjects();
-      if (activeRef.current?.id === id) resetWorkspace();
-      toast.show({ kind: 'info', title: '노트를 삭제했습니다' });
+        refreshProjects();
+        if (activeRef.current?.id === id) resetWorkspace();
+        toast.show({ kind: 'info', title: '노트를 삭제했습니다' });
+      })();
     },
-    [refreshProjects, resetWorkspace, toast],
+    [refreshProjects, resetWorkspace, toast, dialog],
   );
 
   const renameProject = useCallback(
@@ -664,6 +703,7 @@ export const TranscribeWorkspace = () => {
   /** 녹음 시작: 빈 녹음 노트를 먼저 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
   const startRecording = useCallback(() => {
     if (phase === 'splitting' || phase === 'transcribing' || phase === 'recording') return;
+    if (!requireByok()) return;
     stop();
     const now = Date.now();
     const id = newProjectId();
@@ -706,7 +746,7 @@ export const TranscribeWorkspace = () => {
         description: error instanceof Error ? error.message : String(error),
       });
     });
-  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast]);
+  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, requireByok]);
 
   /** 녹음 중지: 마지막 조각까지 보내고, WAV 를 저장한 뒤 남은 인식이 끝나면 완료 효과가 노트를 확정한다 */
   const stopRecording = useCallback(() => {
@@ -781,12 +821,12 @@ export const TranscribeWorkspace = () => {
   );
 
   const exportDoc = useCallback(
-    async (format: ExportFormat, docTitle: string, doc: TiptapDoc) => {
+    async (format: ExportFormat, docTitle: string, doc: TiptapDoc, layout: PageLayout) => {
       try {
         const response = await fetch('/api/export', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ format, title: docTitle, doc }),
+          body: JSON.stringify({ format, title: docTitle, doc, layout }),
         });
         if (!response.ok) {
           const body = (await response.json().catch(() => ({}))) as { error?: string };
@@ -811,23 +851,38 @@ export const TranscribeWorkspace = () => {
     [toast],
   );
 
+  /** 노트의 문서 레이아웃 — 저장된 값이 없거나 옛 형식이면 기본값으로 메운다 */
+  const layout = useMemo(() => normalizePageLayout(activeProject?.layout), [activeProject?.layout]);
+
+  /** 레이아웃 패널의 변경은 바로 노트에 저장된다 */
+  const updateLayout = useCallback(
+    (next: PageLayout) => {
+      const active = activeRef.current;
+      if (!active) return;
+      const updated: Project = { ...active, layout: next, updatedAt: Date.now() };
+      setActive(updated);
+      persist(updated);
+    },
+    [setActive, persist],
+  );
+
   /** 상단 바: 지금 편집 중인 문서 */
   const exportDocument = async (format: ExportFormat) => {
     if (!currentDoc) return;
-    await exportDoc(format, title, currentDoc);
+    await exportDoc(format, title, currentDoc, layout);
   };
 
   /** 노트 메뉴: 열려 있는 노트면 편집 중인 문서, 아니면 저장된 문서 */
   const exportProjectDoc = useCallback(
     (id: string, format: ExportFormat) => {
       if (activeRef.current?.id === id && docRef.current) {
-        void exportDoc(format, title, docRef.current);
+        void exportDoc(format, title, docRef.current, layout);
         return;
       }
       const project = loadProject(window.localStorage, id);
-      if (project) void exportDoc(format, project.title, project.doc);
+      if (project) void exportDoc(format, project.title, project.doc, normalizePageLayout(project.layout));
     },
-    [exportDoc, title],
+    [exportDoc, title, layout],
   );
 
   const recording = phase === 'recording';
@@ -884,25 +939,36 @@ export const TranscribeWorkspace = () => {
         />
 
         <main className={styles.main}>
-          {showEditor ? (
-            <Editor
-              value={editorValue}
-              editable={phase === 'review'}
-              showTimestamps={showTimestamps}
-              currentMs={currentMs}
-              statusLabel={editorStatus}
-              onChange={setDoc}
-              onSeek={(ms) => playerRef.current?.seekTo(ms)}
-              onRetryChunk={retryChunk}
-              onToggleTimestamps={() => setShowTimestamps((v) => !v)}
-              live={liveRow}
-            />
-          ) : (
-            <div className={styles.empty}>
-              <span className={styles.emptyTitle}>오디오를 불러오거나 녹음을 시작하세요</span>
-              <span>오디오를 선택하거나 마이크로 녹음하면 인식이 시작되고, 결과는 이 브라우저에 노트로 저장됩니다.</span>
-            </div>
-          )}
+          <div className={styles.editorColumn}>
+            {showEditor ? (
+              <Editor
+                value={editorValue}
+                editable={phase === 'review'}
+                showTimestamps={showTimestamps}
+                currentMs={currentMs}
+                statusLabel={editorStatus}
+                onChange={setDoc}
+                onSeek={(ms) => playerRef.current?.seekTo(ms)}
+                onRetryChunk={retryChunk}
+                onToggleTimestamps={() => setShowTimestamps((v) => !v)}
+                live={liveRow}
+                layoutOpen={layoutOpen}
+                layoutDisabled={!activeProject}
+                onToggleLayout={() => setLayoutOpen((open) => !open)}
+              />
+            ) : (
+              <div className={styles.empty}>
+                <span className={styles.emptyTitle}>오디오를 불러오거나 녹음을 시작하세요</span>
+                <span>오디오를 선택하거나 마이크로 녹음하면 인식이 시작되고, 결과는 이 브라우저에 노트로 저장됩니다.</span>
+              </div>
+            )}
+          </div>
+          <LayoutPanel
+            open={layoutOpen && activeProject !== null && showEditor}
+            layout={layout}
+            onChange={updateLayout}
+            onClose={() => setLayoutOpen(false)}
+          />
         </main>
       </div>
 

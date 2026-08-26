@@ -22,6 +22,9 @@ export type EditorProps = {
   onToggleTimestamps: () => void;
   /** 녹음 중: 본문 아래에 "다음 조각 시작 시각 + 상태" 줄을 깜박이는 커서와 함께 보여준다 */
   live?: { startMs: number; label: string } | null;
+  layoutOpen: boolean;
+  layoutDisabled: boolean;
+  onToggleLayout: () => void;
 };
 
 export const Editor = ({
@@ -35,6 +38,9 @@ export const Editor = ({
   onRetryChunk,
   onToggleTimestamps,
   live = null,
+  layoutOpen,
+  layoutDisabled,
+  onToggleLayout,
 }: EditorProps) => {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -119,6 +125,9 @@ export const Editor = ({
         showTimestamps={showTimestamps}
         onToggleTimestamps={onToggleTimestamps}
         statusLabel={statusLabel}
+        layoutOpen={layoutOpen}
+        layoutDisabled={layoutDisabled}
+        onToggleLayout={onToggleLayout}
       />
       <div className={styles.divider} />
       <div className={styles.scroll}>

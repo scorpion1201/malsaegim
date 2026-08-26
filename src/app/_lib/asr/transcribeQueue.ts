@@ -1,5 +1,7 @@
 import type { AudioChunk } from '@/app/_lib/audio/types';
+import { readByokSettings } from '@/app/_lib/settings/byokSettings';
 import type { ChunkOutcome } from './assembleTranscript';
+import { ASR_LANGUAGE, AsrHttpError, AsrNetworkError, transcribeDirect } from './directTranscribe';
 
 export const CLIENT_CONCURRENCY = 8;
 
@@ -7,9 +9,7 @@ export type QueueOptions = {
   concurrency: number;
   maxRetries: number;
   baseDelayMs?: number;
-  fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
-  endpoint?: string;
 };
 
 export type QueueHandlers = {
@@ -28,32 +28,20 @@ class RetryableUploadError extends Error {}
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
-const uploadOnce = async (
-  chunk: AudioChunk,
-  endpoint: string,
-  fetchImpl: typeof fetch,
-  signal: AbortSignal,
-): Promise<string> => {
-  const form = new FormData();
-  form.set('index', String(chunk.index));
-  form.set('startMs', String(chunk.startMs));
-  form.set('endMs', String(chunk.endMs));
-  form.set('file', new Blob([chunk.wav.slice()], { type: 'audio/wav' }), `chunk-${chunk.index}.wav`);
-  let response: Response;
+/** 조각 하나를 설정 페이지의 API 로 직접 보낸다. 429/5xx·네트워크 오류는 재시도, 그 밖의 오류는 치명적 */
+const uploadOnce = async (chunk: AudioChunk, signal: AbortSignal): Promise<string> => {
+  const settings = readByokSettings();
   try {
-    response = await fetchImpl(endpoint, { method: 'POST', body: form, signal });
-    } catch (error) {
+    return (await transcribeDirect(chunk.wav, { ...settings, language: ASR_LANGUAGE }, signal)).text;
+  } catch (error) {
     if (signal.aborted) throw error;
-    throw new RetryableUploadError(error instanceof Error ? error.message : 'network error');
+    if (error instanceof AsrNetworkError) throw new RetryableUploadError(error.message);
+    if (error instanceof AsrHttpError) {
+      if (error.status === 429 || error.status >= 500) throw new RetryableUploadError(`HTTP ${error.status}`);
+      throw new FatalUploadError(`${error.message} (HTTP ${error.status})`);
     }
-  if (response.status === 429 || response.status >= 500) {
-    throw new RetryableUploadError(`HTTP ${response.status}`);
-    }
-  if (!response.ok) {
-    throw new FatalUploadError(`HTTP ${response.status}`);
-    }
-  const body = (await response.json()) as { text?: unknown };
-  return typeof body.text === 'string' ? body.text : '';
+    throw new RetryableUploadError(error instanceof Error ? error.message : 'unknown error');
+  }
 };
 
 export const createTranscribeQueue = (
@@ -61,9 +49,7 @@ export const createTranscribeQueue = (
      concurrency,
      maxRetries,
      baseDelayMs = 1000,
-     fetchImpl = fetch,
      sleep = defaultSleep,
-     endpoint = '/api/transcribe',
     }: QueueOptions,
     { onOutcome, onFatal }: QueueHandlers,
 ): TranscribeQueue => {
@@ -83,7 +69,7 @@ export const createTranscribeQueue = (
     for (let attempt = 0; ; attempt += 1) {
       if (controller.signal.aborted) return;
       try {
-        const text = await uploadOnce(chunk, endpoint, fetchImpl, controller.signal);
+        const text = await uploadOnce(chunk, controller.signal);
         onOutcome({ kind: 'ok', meta, text });
         return;
          } catch (error) {
