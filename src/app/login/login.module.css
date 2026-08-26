@@ -1,0 +1,45 @@
+.main {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.form {
+  display: grid;
+  gap: 12px;
+  width: min(360px, 90vw);
+  padding: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.title {
+  margin: 0 0 8px;
+  font-size: 20px;
+}
+
+.label {
+  font-size: 14px;
+  color: var(--color-muted);
+}
+
+.input {
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+.error {
+  margin: 0;
+  color: var(--color-danger);
+  font-size: 14px;
+}
+
+.button {
+  padding: 10px;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--color-accent);
+  color: #fff;
+  cursor: pointer;
+}
