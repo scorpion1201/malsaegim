@@ -1,0 +1,56 @@
+# secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# docs
+docs
+README*
+
+# agent config
+AGENTS.md
+CLAUDE.md
+.claude
+
+# git
+.git
+.gitignore
+.gitattributes
+.github
+
+# IDE
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+# lint & format config
+.prettierrc
+eslint.config.mjs
+
+# dependencies
+node_modules
+.yarn
+yarn.lock
+Cargo.lock
+
+# build output
+.next
+out
+build
+target
+crates/**/target
+src/app/_lib/audio/pkg
+*.tsbuildinfo
+next-env.d.ts
+
+# tests & media
+coverage
+crates/**/tests
+*.mp3
+*.wav
+
+# logs
+*.log

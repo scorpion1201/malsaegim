@@ -1,89 +1,233 @@
 .editor {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
+  flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  min-height: 60vh;
+  background: var(--surface);
 }
 
 .placeholder {
-  padding: 16px;
-  color: var(--color-muted);
+  padding: 16px 20px;
+  color: var(--muted);
 }
+
+/* ---------- 툴바 ---------- */
 
 .toolbar {
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 20px;
+  flex-shrink: 0;
+}
+
+.toolGroup {
+  display: flex;
+  align-items: center;
   gap: 4px;
-  padding: 6px 8px;
-  border-bottom: 1px solid var(--color-border);
-  flex-wrap: wrap;
 }
 
 .tool,
 .toolActive {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
   min-width: 32px;
-  padding: 4px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: #fff;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--fg-2);
+  font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 
+.tool:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
 .toolActive {
-  background: var(--color-accent);
-  color: #fff;
-  border-color: var(--color-accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .tool:disabled,
 .toolActive:disabled {
-  opacity: 0.5;
+  color: var(--border-2);
+  background: transparent;
   cursor: default;
+}
+
+.toolItalic {
+  font-style: italic;
+  font-weight: 500;
+}
+
+.toolUnderline {
+  font-weight: 500;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.toolLabel {
+  font-weight: 500;
 }
 
 .separator {
   width: 1px;
-  margin: 0 4px;
-  background: var(--color-border);
+  height: 16px;
+  margin: 0 6px;
+  background: var(--border-2);
 }
+
+.toolbarMeta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.toolbarMeta .separator {
+  height: 12px;
+  margin: 0;
+}
+
+.divider {
+  height: 1px;
+  margin: 0 20px;
+  background: var(--divider);
+  flex-shrink: 0;
+}
+
+/* ---------- 본문 ---------- */
 
 .content {
   flex: 1;
-  padding: 16px 20px;
-  line-height: 1.7;
+  min-height: 0;
   overflow: auto;
+  padding: 36px 56px 44px;
+  font-size: 15px;
+  line-height: 1.8;
 }
 
 .content :global(.tiptap) {
   outline: none;
-  min-height: 50vh;
+  min-height: 100%;
 }
 
 .content :global(.tiptap p) {
-  margin: 0 0 0.6em;
+  margin: 0 0 18px;
 }
+
+.content :global(.tiptap h1) {
+  margin: 0 0 12px;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+}
+
+.content :global(.tiptap h2) {
+  margin: 20px 0 10px;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+}
+
+.content :global(.tiptap h3) {
+  margin: 16px 0 8px;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.content :global(.tiptap ul),
+.content :global(.tiptap ol) {
+  margin: 0 0 18px;
+  padding-left: 24px;
+}
+
+.content :global(.tiptap strong) {
+  font-weight: 600;
+}
+
+.content :global(.tiptap u) {
+  text-underline-offset: 3px;
+}
+
+/* ---------- 타임스탬프 칩 ---------- */
 
 .timestampWrapper {
   display: inline;
 }
 
 .timestamp {
+  display: inline-block;
+  padding: 1px 7px;
+  margin-right: 10px;
   border: 0;
-  padding: 0 4px;
-  margin-right: 4px;
-  border-radius: 3px;
-  background: var(--color-highlight);
-  color: var(--color-muted);
-  font-size: 0.85em;
+  border-radius: 5px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.6;
+  vertical-align: 1px;
   cursor: pointer;
   user-select: none;
 }
 
+.timestamp:hover {
+  color: var(--fg-2);
+}
+
 .timestampActive {
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.timestampActive:hover {
+  color: var(--accent-fg);
 }
 
 .hideTimestamps .timestampWrapper {
   display: none;
+}
+
+/* ---------- 인식 실패 조각 ---------- */
+
+.failedWrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  vertical-align: baseline;
+}
+
+.failedLabel {
+  color: var(--danger);
+}
+
+.failedRetry {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.failedRetry:hover {
+  background: var(--danger-soft);
 }

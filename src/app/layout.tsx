@@ -1,5 +1,15 @@
 import type { Metadata } from 'next';
+import { IBM_Plex_Sans_KR } from 'next/font/google';
+import { ToastProvider } from './_components/Toast/ToastProvider';
+import { THEME_INIT_SCRIPT } from './_lib/theme';
 import './globals.css';
+
+const plexKr = IBM_Plex_Sans_KR({
+  weight: ['400', '500', '600'],
+  subsets: ['latin'],
+  display: 'swap',
+  variable: '--font-plex-kr',
+});
 
 export const metadata: Metadata = {
   title: '말새김',
@@ -8,9 +18,14 @@ export const metadata: Metadata = {
 };
 
 const RootLayout = ({ children }: LayoutProps<'/'>) => (
-   <html lang="ko">
-     <body>{children}</body>
-   </html>
+  <html lang="ko" className={plexKr.variable} suppressHydrationWarning>
+    <head>
+      <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
+    </head>
+    <body>
+      <ToastProvider>{children}</ToastProvider>
+    </body>
+  </html>
 );
 
 export default RootLayout;

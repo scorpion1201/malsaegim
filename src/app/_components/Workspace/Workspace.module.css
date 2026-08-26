@@ -1,232 +1,371 @@
-.main {
-  max-width: 960px;
-  margin: 0 auto;
-  padding: 24px 16px 48px;
-  display: grid;
-  gap: 16px;
-}
-
-.header {
+.shell {
+  /* iOS Safari: 100vh 는 도구 막대가 숨은 큰 화면 기준이라 막대가 보이면 넘친다 → 동적 뷰포트 단위 */
+  height: 100vh;
+  height: 100dvh;
   display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-
-.title {
-  margin: 0;
-  font-size: 20px;
-}
-
-.uploader {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  cursor: pointer;
-}
-
-.fileInput {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  opacity: 0;
-}
-
-.uploaderButton {
-  padding: 6px 12px;
-  border-radius: var(--radius);
-  background: var(--color-accent);
-  color: #fff;
-}
-
-.fileName {
-  color: var(--color-muted);
-  font-size: 14px;
-}
-
-
-.progress {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.progressBar {
-  flex: 1;
-  height: 8px;
-  border-radius: 4px;
-  background: var(--color-border);
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--fg);
   overflow: hidden;
 }
 
-.progressFill,
-.progressFillError {
-  height: 100%;
-  background: var(--color-accent);
-  transition: width 0.2s;
+/* ---------- 상단 바 ---------- */
+
+.topBar {
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
 }
 
-.progressFillError {
-  background: var(--color-danger);
-}
-
-.progressLabel {
-  font-size: 14px;
-  color: var(--color-muted);
-  min-width: 160px;
-}
-
-.cancel {
-  padding: 4px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: #fff;
-  cursor: pointer;
-}
-
-.player {
-  padding: 8px 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-}
-
-.editor {
-  min-height: 60vh;
-}
-
-.exportBar {
+.topLeft,
+.topRight {
   display: flex;
   align-items: center;
   gap: 12px;
-  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.titleLabel {
+.topLeft {
+  gap: 16px;
+}
+
+.logo {
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.titleField {
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 1;
-  font-size: 14px;
-  color: var(--color-muted);
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: text;
+}
+
+.titleField:hover,
+.titleField:focus-within {
+  background: var(--surface-2);
 }
 
 .titleInput {
-  flex: 1;
-  padding: 6px 10px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-}
-
-.exportButton {
-  padding: 8px 14px;
   border: 0;
-  border-radius: var(--radius);
-  background: var(--color-accent);
-  color: #fff;
-  cursor: pointer;
+  padding: 0;
+  background: transparent;
+  color: var(--fg);
+  font-size: 14px;
+  font-weight: 500;
+  outline: none;
+  min-width: 80px;
 }
 
-.exportButton:disabled {
+.status {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.saved {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.savedDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.themeSlot {
+  margin-left: 8px;
+}
+
+.secondaryButton,
+.primaryButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: var(--radius);
+  border: 0;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.secondaryButton {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.primaryButton {
+  background: var(--accent);
+  color: var(--accent-fg);
+}
+
+.secondaryButton:disabled,
+.primaryButton:disabled {
   opacity: 0.5;
   cursor: default;
 }
 
-.exportError {
-  color: var(--color-danger);
-  font-size: 14px;
-}
-.projectPanel {
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  padding: 0;
+/* ---------- 본문 ---------- */
+
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
 }
 
-.projectSummary {
+.sidebar {
+  width: 264px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.sidebarTop {
+  padding: 16px 16px 8px;
+}
+
+.hiddenInput {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.loadAudio {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 12px;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 38px;
+  border-radius: var(--radius);
+  border: 0;
+  background: var(--surface-2);
+  color: var(--fg-2);
+  font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
-  font-size: 14px;
-  list-style: none;
 }
 
-.projectImport {
-  display: inline-flex;
+.loadAudio:hover {
+  color: var(--fg);
+}
+
+.loadAudio:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sectionLabel {
+  padding: 8px 16px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+
+.projectList {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 0 8px;
+  overflow: auto;
 }
 
 .projectEmpty {
   margin: 0;
-  padding: 0 12px 10px;
-  color: var(--color-muted);
-  font-size: 13px;
-}
-
-.projectList {
-  margin: 0;
-  padding: 0 8px 8px;
-  list-style: none;
-  display: grid;
-  gap: 4px;
-  max-height: 240px;
-  overflow: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
 }
 
 .projectRow,
 .projectRowActive {
+  position: relative;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 8px;
+  align-items: stretch;
   border-radius: var(--radius);
 }
 
-.projectRowActive {
-  background: var(--color-highlight);
+.projectRow:hover {
+  background: var(--surface-2);
 }
 
-.projectInfo {
-  display: grid;
+.projectRowActive {
+  background: var(--surface-2);
+}
+
+.projectOpen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
+  padding: 10px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
   min-width: 0;
 }
 
+.projectOpen:disabled {
+  cursor: default;
+}
+
 .projectTitle {
-  font-size: 14px;
+  width: 100%;
+  font-size: 13px;
+  font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.projectMetaLine {
+.projectMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 12px;
-  color: var(--color-muted);
+  color: var(--muted);
+  white-space: nowrap;
 }
 
-.projectActions {
-  display: inline-flex;
-  gap: 6px;
+.dotOk,
+.dotFailed,
+.dotNone {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   flex-shrink: 0;
 }
 
-.projectAction,
-.projectActionDanger {
-  padding: 3px 8px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius);
-  background: #fff;
+.dotOk {
+  background: var(--success);
+}
+
+.dotFailed {
+  background: var(--danger);
+}
+
+.dotNone {
+  background: var(--border-2);
+}
+
+.projectActions {
+  display: none;
+  align-items: center;
+  gap: 2px;
+  padding-right: 6px;
+}
+
+.projectRow:hover .projectActions,
+.projectRowActive:hover .projectActions,
+.projectRow:focus-within .projectActions,
+.projectRowActive:focus-within .projectActions {
+  display: flex;
+}
+
+.iconButton,
+.iconButtonDanger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.iconButton:hover {
+  color: var(--fg);
+  background: var(--surface);
+}
+
+.iconButtonDanger:hover {
+  color: var(--danger);
+  background: var(--surface);
+}
+
+.sidebarBottom {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+}
+
+.quietButton {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
   font-size: 12px;
   cursor: pointer;
 }
 
-.projectActionDanger {
-  color: var(--color-danger);
+.quietButton:hover {
+  color: var(--fg-2);
 }
 
-.projectAction:disabled,
-.projectActionDanger:disabled {
+.quietButton:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--surface);
+}
+
+/* ---------- 빈 상태 ---------- */
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.emptyTitle {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--fg-2);
 }

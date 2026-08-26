@@ -1,3 +1,4 @@
+import { formatTimestamp } from '@/app/_lib/time';
 import { DocModelError, type Block, type DocModel, type HeadingLevel, type Run } from './docModel';
 
 export type TiptapNode = {
@@ -25,8 +26,18 @@ const runsOf = (nodes: TiptapNode[] | undefined): Run[][] => {
        } else if (node.type === 'hardBreak') {
        groups.push([]);
        } else if (node.type === 'timestamp') {
-        // 내보내기에서는 버린다
-       } else {
+      // 내보내기에서는 버린다
+    } else if (node.type === 'failedChunk') {
+      // 실패 조각은 문서에 자리표시 텍스트로 남긴다
+      const startMs = Number(node.attrs?.startMs ?? 0);
+      const endMs = Number(node.attrs?.endMs ?? 0);
+      groups[groups.length - 1].push({
+        text: `[인식 실패 ${formatTimestamp(startMs)}–${formatTimestamp(endMs)}]`,
+        bold: false,
+        italic: false,
+        underline: false,
+      });
+    } else {
        throw new DocModelError(`지원하지 않는 인라인 노드: ${node.type}`);
         }
       }

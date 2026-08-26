@@ -1,13 +1,79 @@
+/* 디자인 토큰 — 라이트 기본값. 다크는 시스템 설정(prefers-color-scheme) 또는 html[data-theme] 로 적용. */
 :root {
-   --color-bg: #ffffff;
-   --color-fg: #1a1a1a;
-   --color-muted: #6b7280;
-   --color-border: #e5e7eb;
-   --color-accent: #2563eb;
-   --color-danger: #dc2626;
-   --color-highlight: #fef3c7;
-   --radius: 6px;
-   --font-sans: -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --font-sans: var(--font-plex-kr), -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+
+  --bg: #f6f6f4;
+  --surface: #ffffff;
+  --surface-2: #f0f0ec;
+  --fg: #1c1c1a;
+  --fg-2: #55554f;
+  --muted: #8a8a83;
+  --border: #e6e6e1;
+  --border-2: #d6d6cf;
+  --divider: #edede9;
+  --accent: #3a6fe0;
+  --accent-soft: rgba(58, 111, 224, 0.12);
+  --accent-fg: #ffffff;
+  --success: #2e9e6b;
+  --success-soft: rgba(46, 158, 107, 0.14);
+  --danger: #d2483f;
+  --danger-soft: rgba(210, 72, 63, 0.12);
+  --tooltip-bg: #1c1c1a;
+  --tooltip-fg: #f6f6f4;
+  --shadow-toast: 0 2px 6px rgba(20, 20, 10, 0.06), 0 12px 28px -10px rgba(20, 20, 10, 0.2);
+  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.18);
+  --radius: 8px;
+  --radius-sm: 6px;
+
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #121213;
+    --surface: #1a1a1c;
+    --surface-2: #242427;
+    --fg: #ecece9;
+    --fg-2: #b4b4ae;
+    --muted: #7e7e79;
+    --border: #2a2a2e;
+    --border-2: #38383d;
+    --divider: #222226;
+    --accent: #759ae9;
+    --accent-soft: rgba(117, 154, 233, 0.16);
+    --success: #4fc08d;
+    --success-soft: rgba(79, 192, 141, 0.16);
+    --danger: #e5675e;
+    --danger-soft: rgba(229, 103, 94, 0.16);
+    --tooltip-bg: #ecece9;
+    --tooltip-fg: #121213;
+    --shadow-toast: 0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 32px -10px rgba(0, 0, 0, 0.6);
+    --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  --bg: #121213;
+  --surface: #1a1a1c;
+  --surface-2: #242427;
+  --fg: #ecece9;
+  --fg-2: #b4b4ae;
+  --muted: #7e7e79;
+  --border: #2a2a2e;
+  --border-2: #38383d;
+  --divider: #222226;
+  --accent: #759ae9;
+  --accent-soft: rgba(117, 154, 233, 0.16);
+  --success: #4fc08d;
+  --success-soft: rgba(79, 192, 141, 0.16);
+  --danger: #e5675e;
+  --danger-soft: rgba(229, 103, 94, 0.16);
+  --tooltip-bg: #ecece9;
+  --tooltip-fg: #121213;
+  --shadow-toast: 0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 32px -10px rgba(0, 0, 0, 0.6);
+  --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;
 }
 
 *,
@@ -20,12 +86,61 @@ html,
 body {
   margin: 0;
   padding: 0;
-  background: var(--color-bg);
-  color: var(--color-fg);
+  height: 100%;
+  /* 화면은 셸이 채우고 스크롤은 에디터·목록 안에서만 — 문서 자체가 튕기거나 스크롤되지 않게 */
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--fg);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 button,
 input {
   font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+/* 툴팁: data-tooltip="라벨" (+ data-shortcut="⌘B"). 호버/포커스 시 아래에 표시 */
+[data-tooltip] {
+  position: relative;
+}
+
+[data-tooltip]::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%) translateY(-2px);
+  padding: 6px 9px;
+  border-radius: 6px;
+  background: var(--tooltip-bg);
+  color: var(--tooltip-fg);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.3;
+  white-space: nowrap;
+  box-shadow: var(--shadow-pop);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s, transform 0.12s;
+  z-index: 30;
+}
+
+[data-tooltip][data-shortcut]::after {
+  content: attr(data-tooltip) '\2002' attr(data-shortcut);
+}
+
+[data-tooltip]:hover::after,
+[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+  transition-delay: 0.35s;
 }

@@ -7,7 +7,7 @@ import { sha256Hex } from '@/app/_lib/audio/fileHash';
 import { extractAudioRanges, splitAudioBuffer, type SplitHandle } from '@/app/_lib/audio/splitAudioFile';
 import { DEFAULT_SPLIT_OPTIONS, type ExtractRange } from '@/app/_lib/audio/types';
 import { blocksToTiptapDoc } from '@/app/_lib/editor/blocksToTiptapDoc';
-import { patchFailedParagraph } from '@/app/_lib/editor/patchTranscript';
+import { patchFailedParagraph, upgradeFailedPlaceholders } from '@/app/_lib/editor/patchTranscript';
 import {
   deleteProject,
   listProjects,
@@ -25,16 +25,18 @@ import {
 } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
-import { AudioPlayer, type AudioPlayerHandle } from '../AudioPlayer/AudioPlayer';
 import { Editor } from '../Editor/Editor';
-import { ExportBar } from './ExportBar';
-import { ProjectPanel } from './ProjectPanel';
-import { TranscribeProgress } from './TranscribeProgress';
-import { Uploader } from './Uploader';
+import { PlayerBar, type PlayerBarHandle } from '../PlayerBar/PlayerBar';
+import { useToast } from '../Toast/ToastProvider';
+import { Sidebar, type SidebarHandle } from './Sidebar';
+import { TopBar } from './TopBar';
 import styles from './Workspace.module.css';
 
 type Phase = 'idle' | 'splitting' | 'transcribing' | 'review' | 'error';
 type RunMode = 'new' | 'retry';
+
+const TRANSCRIBE_TOAST = 'transcribe';
+const RETRY_TOAST = 'retry';
 
 const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '');
 
@@ -59,7 +61,12 @@ const toExtractRanges = (failed: StoredChunk[], all: StoredChunk[]): ExtractRang
   }));
 };
 
+const failedChunksOf = (project: Project): StoredChunk[] =>
+  project.chunks.filter((chunk) => chunk.status === 'failed');
+
 export const TranscribeWorkspace = () => {
+  const toast = useToast();
+
   const [phase, setPhase] = useState<Phase>('idle');
   const [mode, setMode] = useState<RunMode>('new');
   const [file, setFile] = useState<File | null>(null);
@@ -67,7 +74,6 @@ export const TranscribeWorkspace = () => {
   const [outcomes, setOutcomes] = useState<Map<number, ChunkOutcome>>(new Map());
   const [expectedCount, setExpectedCount] = useState<number | null>(null);
   const [durationMs, setDurationMs] = useState<number | null>(null);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [editorValue, setEditorValue] = useState<TiptapDoc | null>(null);
   const [currentDoc, setCurrentDoc] = useState<TiptapDoc | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
@@ -76,13 +82,16 @@ export const TranscribeWorkspace = () => {
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [retryDone, setRetryDone] = useState(0);
   const [retryTotal, setRetryTotal] = useState(0);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
 
-  const playerRef = useRef<AudioPlayerHandle>(null);
+  const playerRef = useRef<PlayerBarHandle>(null);
+  const sidebarRef = useRef<SidebarHandle>(null);
   const splitRef = useRef<SplitHandle | null>(null);
   const queueRef = useRef<TranscribeQueue | null>(null);
   const docRef = useRef<TiptapDoc | null>(null);
   const activeRef = useRef<Project | null>(null);
   const pendingAudioRef = useRef<ProjectAudio | null>(null);
+  const pendingRetryRef = useRef<number | null>(null);
 
   const assembled = useMemo(() => assembleTranscript(outcomes, expectedCount), [outcomes, expectedCount]);
 
@@ -100,14 +109,32 @@ export const TranscribeWorkspace = () => {
     setCurrentDoc(doc);
   }, []);
 
-  // 조립 결과 → 에디터 (새 인식 중에만 갱신 — 재인식은 placeholder 패치로 처리)
+  const persist = useCallback(
+    (project: Project) => {
+      saveProject(window.localStorage, project);
+      setSavedAt(project.updatedAt);
+      setProjects((previous) => [toMeta(project), ...previous.filter((meta) => meta.id !== project.id)]);
+    },
+    [],
+  );
+
+  // 조립 결과 → 에디터 + 진행 토스트 (새 인식 중에만)
   useEffect(() => {
     if (mode !== 'new' || (phase !== 'transcribing' && phase !== 'splitting')) return;
     const doc = blocksToTiptapDoc(assembled.blocks);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setEditorValue(doc);
     setDoc(doc);
-  }, [assembled, phase, mode, setDoc]);
+    if (phase === 'transcribing') {
+      const total = expectedCount ?? assembled.readyCount + assembled.heldCount;
+      toast.update(TRANSCRIBE_TOAST, {
+        title: `인식 중 · 조각 ${assembled.readyCount}/${expectedCount ?? `${total}+`}`,
+        description: assembled.heldCount > 0 ? `순서 대기 ${assembled.heldCount}` : undefined,
+        progress: expectedCount ? (assembled.readyCount / expectedCount) * 100 : 0,
+        meta: expectedCount ? `${Math.round((assembled.readyCount / expectedCount) * 100)}%` : undefined,
+      });
+    }
+  }, [assembled, phase, mode, expectedCount, setDoc, toast]);
 
   // 새 인식이 전부 끝나면 프로젝트로 저장하고 검수 단계로
   useEffect(() => {
@@ -133,10 +160,18 @@ export const TranscribeWorkspace = () => {
       doc,
     };
     setActive(project);
-    saveProject(window.localStorage, project);
+    persist(project);
     setPhase('review');
-    refreshProjects();
-  }, [mode, phase, assembled, outcomes, title, setActive, refreshProjects]);
+    const failed = chunks.filter((chunk) => chunk.status === 'failed').length;
+    toast.update(TRANSCRIBE_TOAST, {
+      kind: failed > 0 ? 'error' : 'success',
+      title: failed > 0 ? `인식 완료 · 실패 ${failed}개` : '인식 완료',
+      description: failed > 0 ? '실패한 조각 옆 새로고침을 누르면 그 구간만 다시 인식합니다.' : `${chunks.length}개 조각`,
+      progress: undefined,
+      meta: undefined,
+      duration: failed > 0 ? 8000 : 4000,
+    });
+  }, [mode, phase, assembled, outcomes, title, setActive, persist, toast]);
 
   // 최초 진입: 예전 단일 초안 마이그레이션 + 목록 로드 + 최근 프로젝트 자동 열기
   useEffect(() => {
@@ -147,12 +182,14 @@ export const TranscribeWorkspace = () => {
     if (metas.length > 0) {
       const recent = loadProject(window.localStorage, metas[0].id);
       if (recent) {
-        setActive(recent);
+        const doc = upgradeFailedPlaceholders(recent.doc, failedChunksOf(recent));
+        setActive({ ...recent, doc });
         setTitle(recent.title);
-        setEditorValue(recent.doc);
-        setDoc(recent.doc);
+        setEditorValue(doc);
+        setDoc(doc);
         setDurationMs(recent.audio?.durationMs ?? null);
         setExpectedCount(recent.chunks.length > 0 ? recent.chunks.length : null);
+        setSavedAt(recent.updatedAt);
         setPhase('review');
       }
     }
@@ -162,14 +199,15 @@ export const TranscribeWorkspace = () => {
   // 검수 단계 자동 저장 (500ms 디바운스)
   useEffect(() => {
     if (phase !== 'review' || !currentDoc || !activeProject) return;
+    if (activeProject.doc === currentDoc && activeProject.title === title) return;
     const timer = setTimeout(() => {
       const updated: Project = { ...activeProject, title, doc: currentDoc, updatedAt: Date.now() };
       activeRef.current = updated;
-      saveProject(window.localStorage, updated);
-      setProjects((previous) => [toMeta(updated), ...previous.filter((meta) => meta.id !== updated.id)]);
+      setActiveProject(updated);
+      persist(updated);
     }, 500);
     return () => clearTimeout(timer);
-  }, [phase, currentDoc, title, activeProject]);
+  }, [phase, currentDoc, title, activeProject, persist]);
 
   const stop = useCallback(() => {
     splitRef.current?.cancel();
@@ -182,25 +220,28 @@ export const TranscribeWorkspace = () => {
 
   const failWith = useCallback(
     (error: unknown) => {
-      setErrorMessage(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      const expired = message.includes('401');
       setPhase('error');
       stop();
+      toast.dismiss(TRANSCRIBE_TOAST);
+      toast.dismiss(RETRY_TOAST);
+      toast.show({
+        kind: 'error',
+        title: expired ? '로그인이 만료되었습니다' : '인식을 계속할 수 없습니다',
+        description: expired ? '편집 내용은 이 브라우저에 저장돼 있습니다.' : message,
+        duration: 0,
+        actions: expired ? [{ label: '다시 로그인', primary: true, onClick: () => window.location.reload() }] : undefined,
+      });
     },
-    [stop],
+    [stop, toast],
   );
 
   const makeQueue = useCallback(
     (onOutcome: (outcome: ChunkOutcome) => void) =>
       createTranscribeQueue(
         { concurrency: CLIENT_CONCURRENCY, maxRetries: 3 },
-        {
-          onOutcome,
-          onFatal: (error) => {
-            failWith(
-              error.message.includes('401') ? new Error('로그인이 만료되었습니다. 새로고침하세요.') : error,
-            );
-          },
-        },
+        { onOutcome, onFatal: failWith },
       ),
     [failWith],
   );
@@ -212,15 +253,17 @@ export const TranscribeWorkspace = () => {
       setMode('new');
       setActive(null);
       pendingAudioRef.current = null;
+      pendingRetryRef.current = null;
       setFile(selected);
       setTitle(stripExtension(selected.name));
       setOutcomes(new Map());
       setExpectedCount(null);
       setDurationMs(null);
-      setErrorMessage(null);
+      setSavedAt(null);
       setEditorValue(null);
       setDoc(null);
       setPhase('splitting');
+      toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '오디오를 나누는 중…', progress: 0 });
 
       const queue = makeQueue((outcome) =>
         setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)),
@@ -247,7 +290,7 @@ export const TranscribeWorkspace = () => {
         })
         .catch(failWith);
     },
-    [stop, setActive, setDoc, makeQueue, failWith],
+    [stop, setActive, setDoc, makeQueue, failWith, toast],
   );
 
   /** 재인식: 저장된 시간 구간만 추출해 실패 조각만 다시 보낸다 */
@@ -255,13 +298,25 @@ export const TranscribeWorkspace = () => {
     (buffer: ArrayBuffer, failed: StoredChunk[], project: Project) => {
       stop();
       setMode('retry');
-      setErrorMessage(null);
       setRetryDone(0);
       setRetryTotal(failed.length);
       setPhase('transcribing');
+      toast.show({
+        id: RETRY_TOAST,
+        kind: 'progress',
+        title: `재인식 중 · 0/${failed.length}`,
+        description: failed.length === 1 ? '실패했던 조각 하나만 다시 보냅니다' : `실패했던 ${failed.length}개 조각만 다시 보냅니다`,
+        progress: 0,
+      });
 
+      let done = 0;
       const queue = makeQueue((outcome) => {
-        setRetryDone((done) => done + 1);
+        done += 1;
+        setRetryDone(done);
+        toast.update(RETRY_TOAST, {
+          title: `재인식 중 · ${done}/${failed.length}`,
+          progress: (done / failed.length) * 100,
+        });
         if (outcome.kind !== 'ok') return;
         const current = activeRef.current;
         const doc = docRef.current;
@@ -289,66 +344,111 @@ export const TranscribeWorkspace = () => {
         .then((summary) => {
           const stored = project.audio?.durationMs;
           if (typeof stored === 'number' && Math.abs(summary.totalMs - stored) > 50) {
-            console.warn(
-              `[retry] 디코드 길이가 저장값과 다릅니다: stored=${stored}ms decoded=${summary.totalMs}ms`,
-            );
+            console.warn(`[retry] 디코드 길이가 저장값과 다릅니다: stored=${stored}ms decoded=${summary.totalMs}ms`);
           }
           return queue.close();
         })
         .then(() => {
           const current = activeRef.current;
+          let remaining = 0;
           if (current) {
-            const updated: Project = {
-              ...current,
-              doc: docRef.current ?? current.doc,
-              updatedAt: Date.now(),
-            };
+            const updated: Project = { ...current, doc: docRef.current ?? current.doc, updatedAt: Date.now() };
             setActive(updated);
-            saveProject(window.localStorage, updated);
-            refreshProjects();
+            persist(updated);
+            remaining = failedChunksOf(updated).length;
           }
           setMode('new');
           setPhase('review');
+          toast.update(RETRY_TOAST, {
+            kind: remaining > 0 ? 'error' : 'success',
+            title: remaining > 0 ? `재인식 끝 · 아직 실패 ${remaining}개` : '재인식 완료',
+            description: remaining > 0 ? '잠시 후 새로고침을 다시 눌러 보세요.' : undefined,
+            progress: undefined,
+            duration: remaining > 0 ? 8000 : 4000,
+          });
         })
         .catch(failWith);
     },
-    [stop, makeQueue, setActive, refreshProjects, failWith],
+    [stop, makeQueue, setActive, persist, failWith, toast],
   );
 
-  /** 파일 선택: 같은 mp3 면 재생 연결·부분 재인식, 다른 파일이면 새 프로젝트 */
+  /** 파일 선택: 같은 오디오면 재생 연결·부분 재인식, 다른 파일이면 새 프로젝트 */
   const start = useCallback(
     (selected: File) => {
       void (async () => {
         const buffer = await selected.arrayBuffer();
         const sha256 = await sha256Hex(buffer); // transfer 전에 해시부터
         const active = activeRef.current;
+        const pending = pendingRetryRef.current;
+        pendingRetryRef.current = null;
 
         if (active?.audio && active.audio.sha256 === sha256) {
           setFile(selected);
           setDurationMs(active.audio.durationMs);
-          const failed = active.chunks.filter((chunk) => chunk.status === 'failed');
-          if (failed.length > 0) beginRetry(buffer, failed, active);
+          const allFailed = failedChunksOf(active);
+          const failed = pending === null ? allFailed : allFailed.filter((chunk) => chunk.index === pending);
+          if (failed.length > 0) {
+            beginRetry(buffer, failed, active);
+          } else {
+            toast.show({
+              kind: 'info',
+              title: '같은 오디오를 연결했습니다',
+              description: '모든 조각이 완료돼 재생만 연결됩니다.',
+            });
+          }
+          return;
+        }
+
+        if (pending !== null) {
+          toast.show({
+            kind: 'error',
+            title: '다른 파일입니다',
+            description: '이 프로젝트의 오디오와 내용이 다릅니다. 원본 파일을 선택하세요.',
+          });
           return;
         }
 
         if (active) {
-          const proceed = window.confirm(
-            '열려 있는 프로젝트와 다른 파일입니다. 새 프로젝트로 시작할까요?',
-          );
+          const proceed = window.confirm('열려 있는 프로젝트와 다른 파일입니다. 새 프로젝트로 시작할까요?');
           if (!proceed) return;
         }
         beginNew(selected, buffer, sha256);
       })().catch(failWith);
     },
-    [beginNew, beginRetry, failWith],
+    [beginNew, beginRetry, failWith, toast],
   );
 
-  const cancel = useCallback(() => {
-    stop();
-    setMode('new');
-    setPhase(outcomes.size > 0 || currentDoc ? 'review' : 'idle');
-    setExpectedCount(outcomes.size);
-  }, [stop, outcomes.size, currentDoc]);
+  /** 에디터의 실패 조각 새로고침: 오디오가 연결돼 있으면 바로, 아니면 파일 선택부터 */
+  const retryChunk = useCallback(
+    (startMs: number) => {
+      const project = activeRef.current;
+      if (!project) return;
+      const chunk = project.chunks.find((c) => c.startMs === startMs && c.status === 'failed');
+      if (!chunk) {
+        toast.show({
+          kind: 'error',
+          title: '조각 정보를 찾을 수 없습니다',
+          description: '오디오를 다시 불러오면 남은 실패 조각을 모두 재인식합니다.',
+        });
+        return;
+      }
+      if (file) {
+        void file
+          .arrayBuffer()
+          .then((buffer) => beginRetry(buffer, [chunk], project))
+          .catch(failWith);
+        return;
+      }
+      pendingRetryRef.current = chunk.index;
+      toast.show({
+        kind: 'info',
+        title: '오디오를 먼저 불러오세요',
+        description: '같은 파일을 선택하면 이 조각만 다시 인식합니다.',
+      });
+      sidebarRef.current?.openAudioPicker();
+    },
+    [file, beginRetry, failWith, toast],
+  );
 
   const resetWorkspace = useCallback(() => {
     stop();
@@ -358,6 +458,7 @@ export const TranscribeWorkspace = () => {
     setOutcomes(new Map());
     setExpectedCount(null);
     setDurationMs(null);
+    setSavedAt(null);
     setEditorValue(null);
     setDoc(null);
     setPhase('idle');
@@ -368,15 +469,18 @@ export const TranscribeWorkspace = () => {
       const project = loadProject(window.localStorage, id);
       if (!project) return;
       stop();
+      pendingRetryRef.current = null;
+      const doc = upgradeFailedPlaceholders(project.doc, failedChunksOf(project));
       setMode('new');
-      setActive(project);
+      setActive({ ...project, doc });
       setFile(null);
       setTitle(project.title);
-      setEditorValue(project.doc);
-      setDoc(project.doc);
+      setEditorValue(doc);
+      setDoc(doc);
       setOutcomes(new Map());
       setExpectedCount(project.chunks.length > 0 ? project.chunks.length : null);
       setDurationMs(project.audio?.durationMs ?? null);
+      setSavedAt(project.updatedAt);
       setCurrentMs(0);
       setPhase('review');
     },
@@ -389,8 +493,9 @@ export const TranscribeWorkspace = () => {
       deleteProject(window.localStorage, id);
       refreshProjects();
       if (activeRef.current?.id === id) resetWorkspace();
+      toast.show({ kind: 'info', title: '프로젝트를 삭제했습니다' });
     },
-    [refreshProjects, resetWorkspace],
+    [refreshProjects, resetWorkspace, toast],
   );
 
   const exportProject = useCallback((id: string) => {
@@ -408,96 +513,110 @@ export const TranscribeWorkspace = () => {
         const text = await jsonFile.text();
         const project = parseProjectFile(text, Date.now());
         if (!project) {
-          window.alert('가져올 수 없는 파일입니다. 이 앱에서 내보낸 .asr.json 인지 확인하세요.');
+          toast.show({
+            kind: 'error',
+            title: '불러올 수 없는 파일입니다',
+            description: '이 앱에서 내보낸 .asr.json 파일인지 확인하세요.',
+          });
           return;
         }
         saveProject(window.localStorage, project);
         refreshProjects();
         openProject(project.id);
+        toast.show({ kind: 'success', title: '프로젝트를 불러왔습니다', description: project.title });
       })().catch(failWith);
     },
-    [refreshProjects, openProject, failWith],
+    [refreshProjects, openProject, failWith, toast],
   );
 
   const exportDocument = async (format: ExportFormat) => {
-    if (!currentDoc) throw new Error('내보낼 내용이 없습니다');
-    const response = await fetch('/api/export', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ format, title, doc: currentDoc }),
-    });
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? `내보내기 실패 (${response.status})`);
+    if (!currentDoc) return;
+    try {
+      const response = await fetch('/api/export', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ format, title, doc: currentDoc }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `내보내기 실패 (${response.status})`);
+      }
+      const blob = await response.blob();
+      const filename = `${title.trim() || 'transcript'}.${format}`;
+      downloadBlob(blob, filename);
+      toast.show({
+        kind: 'success',
+        title: `${format.toUpperCase()} 저장 완료`,
+        description: `${filename} · ${Math.max(1, Math.round(blob.size / 1024))}KB`,
+      });
+    } catch (error) {
+      toast.show({
+        kind: 'error',
+        title: '문서를 만들지 못했습니다',
+        description: error instanceof Error ? error.message : String(error),
+      });
     }
-    const blob = await response.blob();
-    downloadBlob(blob, `${title.trim() || 'transcript'}.${format}`);
   };
 
   const busy = phase === 'splitting' || phase === 'transcribing';
+  const topStatus =
+    phase === 'splitting'
+      ? '오디오를 나누는 중…'
+      : phase === 'transcribing'
+        ? mode === 'retry'
+          ? `재인식 ${retryDone}/${retryTotal}`
+          : `인식 ${assembled.readyCount}/${expectedCount ?? '…'}`
+        : null;
+  const editorStatus = phase === 'review' ? '검수 중' : busy ? '인식 중 · 편집 잠금' : '대기';
+  const showEditor = editorValue !== null || phase !== 'idle';
 
   return (
-    <main className={styles.main}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>말새김</h1>
-        <Uploader disabled={busy} fileName={file?.name ?? null} onSelect={start} />
-      </header>
-
-      <ProjectPanel
-        projects={projects}
-        activeId={activeProject?.id ?? null}
-        disabled={busy}
-        onOpen={openProject}
-        onDelete={removeProject}
-        onExport={exportProject}
-        onImport={importProject}
-      />
-
-      {phase !== 'review' || expectedCount !== null ? (
-        <TranscribeProgress
-          phase={phase}
-          readyCount={
-            phase === 'review'
-              ? (expectedCount ?? 0)
-              : mode === 'retry'
-                ? retryDone
-                : assembled.readyCount
-          }
-          heldCount={mode === 'retry' ? 0 : assembled.heldCount}
-          totalCount={mode === 'retry' && phase !== 'review' ? retryTotal : expectedCount}
-          errorMessage={errorMessage}
-          onCancel={cancel}
-        />
-      ) : null}
-
-      <section className={styles.player}>
-        <AudioPlayer
-          ref={playerRef}
-          file={file}
-          currentMs={currentMs}
-          durationMs={durationMs}
-          onTimeUpdate={setCurrentMs}
-        />
-      </section>
-
-      <section className={styles.editor}>
-        <Editor
-          value={editorValue}
-          editable={phase === 'review'}
-          showTimestamps={showTimestamps}
-          currentMs={currentMs}
-          onChange={setDoc}
-          onSeek={(ms) => playerRef.current?.seekTo(ms)}
-          onToggleTimestamps={() => setShowTimestamps((v) => !v)}
-        />
-      </section>
-
-      <ExportBar
+    <div className={styles.shell}>
+      <TopBar
         title={title}
-        disabled={phase !== 'review'}
         onTitleChange={setTitle}
+        savedAt={phase === 'review' ? savedAt : null}
+        status={topStatus}
+        exportDisabled={phase !== 'review' || !currentDoc}
         onExport={exportDocument}
       />
-    </main>
+
+      <div className={styles.body}>
+        <Sidebar
+          ref={sidebarRef}
+          projects={projects}
+          activeId={activeProject?.id ?? null}
+          disabled={busy}
+          onSelectAudio={start}
+          onOpen={openProject}
+          onDelete={removeProject}
+          onExport={exportProject}
+          onImport={importProject}
+        />
+
+        <main className={styles.main}>
+          {showEditor ? (
+            <Editor
+              value={editorValue}
+              editable={phase === 'review'}
+              showTimestamps={showTimestamps}
+              currentMs={currentMs}
+              statusLabel={editorStatus}
+              onChange={setDoc}
+              onSeek={(ms) => playerRef.current?.seekTo(ms)}
+              onRetryChunk={retryChunk}
+              onToggleTimestamps={() => setShowTimestamps((v) => !v)}
+            />
+          ) : (
+            <div className={styles.empty}>
+              <span className={styles.emptyTitle}>오디오를 불러와 시작하세요</span>
+              <span>mp3를 선택하면 인식이 시작되고, 결과는 이 브라우저에 프로젝트로 저장됩니다.</span>
+            </div>
+          )}
+        </main>
+      </div>
+
+      <PlayerBar ref={playerRef} file={file} durationMs={durationMs} onTimeUpdate={setCurrentMs} />
+    </div>
   );
 };

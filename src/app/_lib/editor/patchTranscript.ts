@@ -1,18 +1,21 @@
 import type { TiptapDoc, TiptapNode } from '@/app/_lib/hwp/tiptapToDocModel';
+import { failedChunkNode } from './blocksToTiptapDoc';
 
-/** assembleTranscript 가 만드는 실패 placeholder 문단의 텍스트 접두사 */
+/** 예전 버전이 만들던 텍스트형 placeholder 의 접두사 */
 export const FAILED_PREFIX = '[인식 실패';
 
-const isFailedParagraph = (node: TiptapNode, startMs: number): boolean => {
-  if (node.type !== 'paragraph' || !node.content) return false;
-  const hasTimestamp = node.content.some(
-    (child) => child.type === 'timestamp' && Number(child.attrs?.ms) === startMs,
+const hasTimestamp = (node: TiptapNode, startMs: number): boolean =>
+  (node.content ?? []).some((child) => child.type === 'timestamp' && Number(child.attrs?.ms) === startMs);
+
+const hasFailedMarker = (node: TiptapNode): boolean =>
+  (node.content ?? []).some(
+    (child) =>
+      child.type === 'failedChunk' ||
+      (child.type === 'text' && (child.text ?? '').startsWith(FAILED_PREFIX)),
   );
-  const hasPlaceholder = node.content.some(
-    (child) => child.type === 'text' && (child.text ?? '').startsWith(FAILED_PREFIX),
-  );
-  return hasTimestamp && hasPlaceholder;
-};
+
+const isFailedParagraph = (node: TiptapNode, startMs: number): boolean =>
+  node.type === 'paragraph' && hasTimestamp(node, startMs) && hasFailedMarker(node);
 
 /**
  * 재인식 성공한 조각의 placeholder 문단을 본문 텍스트로 교체한다.
@@ -37,4 +40,28 @@ export const patchFailedParagraph = (
   const nextContent = [...content];
   nextContent[index] = replaced;
   return { doc: { ...doc, content: nextContent }, patched: true };
+};
+
+/**
+ * 예전 프로젝트의 텍스트형 placeholder("[인식 실패 …]")를 failedChunk 노드로 바꾼다.
+ * 저장된 실패 조각 목록과 timestamp ms 가 맞는 문단만 대상이다.
+ */
+export const upgradeFailedPlaceholders = (
+  doc: TiptapDoc,
+  failed: Array<{ startMs: number; endMs: number }>,
+): TiptapDoc => {
+  if (failed.length === 0 || !doc.content) return doc;
+  let changed = false;
+  const content = doc.content.map((node) => {
+    const chunk = failed.find((f) => isFailedParagraph(node, f.startMs));
+    if (!chunk) return node;
+    const alreadyNode = (node.content ?? []).some((child) => child.type === 'failedChunk');
+    if (alreadyNode) return node;
+    changed = true;
+    return {
+      type: 'paragraph',
+      content: [{ type: 'timestamp', attrs: { ms: chunk.startMs } }, failedChunkNode(chunk.startMs, chunk.endMs)],
+    };
+  });
+  return changed ? { ...doc, content } : doc;
 };

@@ -2,10 +2,11 @@
 
 import { EditorContent, useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import styles from './Editor.module.css';
-import { TimestampNode } from './TimestampNode';
+import { FailedChunkNode, RETRY_EVENT, type RetryEventDetail } from './FailedChunkNode';
+import { SEEK_EVENT, TimestampNode, type SeekEventDetail } from './TimestampNode';
 import { Toolbar } from './Toolbar';
 
 export type EditorProps = {
@@ -13,8 +14,10 @@ export type EditorProps = {
   editable: boolean;
   showTimestamps: boolean;
   currentMs: number;
+  statusLabel: string;
   onChange: (doc: TiptapDoc) => void;
   onSeek: (ms: number) => void;
+  onRetryChunk: (startMs: number, endMs: number) => void;
   onToggleTimestamps: () => void;
 };
 
@@ -23,51 +26,74 @@ export const Editor = ({
   editable,
   showTimestamps,
   currentMs,
+  statusLabel,
   onChange,
   onSeek,
+  onRetryChunk,
   onToggleTimestamps,
 }: EditorProps) => {
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // 확장 목록은 한 번만 만든다 — 매 렌더마다 새 배열이면 useEditor 가 setOptions 를 반복한다.
+  // 노드뷰의 클릭은 DOM 이벤트로 올라오고 아래 effect 가 현재 콜백으로 받는다.
+  const extensions = useMemo(
+    () => [
+      StarterKit.configure({
+        heading: { levels: [1, 2, 3] },
+        blockquote: false,
+        code: false,
+        codeBlock: false,
+        horizontalRule: false,
+        strike: false,
+        link: false,
+        dropcursor: false,
+        gapcursor: false,
+      }),
+      TimestampNode,
+      FailedChunkNode,
+    ],
+    [],
+  );
+
   const editor = useEditor({
     immediatelyRender: false,
     editable,
-    extensions: [
-       StarterKit.configure({
-         heading: { levels: [1, 2, 3] },
-         blockquote: false,
-         code: false,
-         codeBlock: false,
-         horizontalRule: false,
-         strike: false,
-         link: false,
-         dropcursor: false,
-         gapcursor: false,
-            }),
-       TimestampNode.configure({ onSeek }),
-        ],
+    extensions,
     content: value ?? undefined,
     onUpdate: ({ editor: e }) => onChange(e.getJSON() as TiptapDoc),
-       });
+  });
 
   useEffect(() => {
-    // emitUpdate=false: 기본값(true)이면 이 효과가 setContent 효과보다 먼저 update 이벤트를 내보내
-    // 아직 갱신되지 않은 이전 내용이 onChange 로 currentDoc 을 덮어쓴다 (마지막 문단 누락 버그).
+    const root = rootRef.current;
+    if (!root) return;
+    const onSeekEvent = (event: Event) => onSeek((event as CustomEvent<SeekEventDetail>).detail.ms);
+    const onRetryEvent = (event: Event) => {
+      const { startMs, endMs } = (event as CustomEvent<RetryEventDetail>).detail;
+      onRetryChunk(startMs, endMs);
+    };
+    root.addEventListener(SEEK_EVENT, onSeekEvent);
+    root.addEventListener(RETRY_EVENT, onRetryEvent);
+    return () => {
+      root.removeEventListener(SEEK_EVENT, onSeekEvent);
+      root.removeEventListener(RETRY_EVENT, onRetryEvent);
+    };
+  }, [onSeek, onRetryChunk, editor]);
+
+  useEffect(() => {
+    // emitUpdate=false: 기본값이면 setContent 효과보다 먼저 update 이벤트가 나가 이전 내용이 onChange 로 덮어쓴다
     editor?.setEditable(editable, false);
-     }, [editor, editable]);
+  }, [editor, editable]);
 
   useEffect(() => {
     if (!editor || !value) return;
-    // Tiptap 의 ReactNodeViewRenderer 는 setContent 중 flushSync 를 호출한다. React 는 자신의 렌더·
-    // 패시브 효과 플러시도 마이크로태스크로 스케줄하므로 queueMicrotask 로는 충돌을 피할 수 없다
-    // (실측: 오류 지속). 매크로태스크(setTimeout 0)로 미루면 커밋이 완전히 끝난 뒤 실행된다.
+    // Tiptap 노드뷰는 setContent 중 flushSync 를 부르므로 React 커밋 밖(매크로태스크)에서 실행한다
     const timer = setTimeout(() => {
       if (!editor.isDestroyed) editor.commands.setContent(value, { emitUpdate: false });
     }, 0);
     return () => clearTimeout(timer);
-     }, [editor, value]);
+  }, [editor, value]);
 
-     // 현재 재생 위치가 속한 조각(= ms 가 currentMs 이하인 것 중 최대)의 타임스탬프를 강조한다
+  // 현재 재생 위치가 속한 조각(= ms 가 currentMs 이하인 것 중 최대)의 타임스탬프를 강조한다
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -76,16 +102,22 @@ export const Editor = ({
     for (const button of buttons) {
       const ms = Number(button.dataset.ms);
       if (ms <= currentMs && (!active || ms > Number(active.dataset.ms))) active = button;
-         }
+    }
     buttons.forEach((button) => button.classList.toggle(styles.timestampActive, button === active));
-     }, [currentMs, value]);
+  }, [currentMs, value]);
 
   if (!editor) return <div className={styles.placeholder}>에디터 준비 중…</div>;
 
   return (
-      <div ref={rootRef} className={showTimestamps ? styles.editor : `${styles.editor} ${styles.hideTimestamps}`}>
-        <Toolbar editor={editor} showTimestamps={showTimestamps} onToggleTimestamps={onToggleTimestamps} />
-        <EditorContent editor={editor} className={styles.content} />
-      </div>
-    );
+    <div ref={rootRef} className={showTimestamps ? styles.editor : `${styles.editor} ${styles.hideTimestamps}`}>
+      <Toolbar
+        editor={editor}
+        showTimestamps={showTimestamps}
+        onToggleTimestamps={onToggleTimestamps}
+        statusLabel={statusLabel}
+      />
+      <div className={styles.divider} />
+      <EditorContent editor={editor} className={styles.content} />
+    </div>
+  );
 };

@@ -1,0 +1,24 @@
+# 말새김 — single service. Values come from the shell or the project .env file via
+# Compose variable substitution; the .env file itself is never copied into the image.
+services:
+  malsaegim:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: malsaegim:latest
+    container_name: malsaegim
+    restart: unless-stopped
+    ports:
+      - "8888:3000"
+    environment:
+      NODE_ENV: production
+      # ASR is BYOK: the browser calls the user's own API directly; the server keeps no key, URL or model
+      # Access control (optional: leave APP_SHARED_PASSWORD empty to disable the login page)
+      APP_SHARED_PASSWORD: ${APP_SHARED_PASSWORD:-}
+      AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:-}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

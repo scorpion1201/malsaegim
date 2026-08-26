@@ -1,0 +1,155 @@
+.stack {
+  position: fixed;
+  right: 24px;
+  bottom: 84px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 340px;
+  z-index: 50;
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-toast);
+  pointer-events: auto;
+  animation: toast-in 0.24s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+
+.iconSuccess {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.iconInfo {
+  background: var(--surface-2);
+  color: var(--fg-2);
+}
+
+.iconProgress {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.iconError {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.description {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.action,
+.actionPrimary {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.actionPrimary {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--surface-2);
+}
+
+.bar {
+  height: 3px;
+  border-radius: 2px;
+  background: var(--surface-2);
+}
+
+.barFill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s;
+}
