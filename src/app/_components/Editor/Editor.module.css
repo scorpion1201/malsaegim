@@ -146,6 +146,11 @@
   color: var(--fg-2);
 }
 
+/* On-Device 실시간 부분 텍스트 — 확정되면 위 문단으로 올라간다 */
+.livePartial {
+  color: var(--fg);
+}
+
 .caret {
   display: inline-block;
   width: 2px;

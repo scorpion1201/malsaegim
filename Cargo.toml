@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/audio-splitter"]
+members = ["crates/audio-splitter", "crates/engine"]
 resolver = "2"
 
 [profile.release]

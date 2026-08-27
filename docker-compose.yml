@@ -17,7 +17,7 @@ services:
       APP_SHARED_PASSWORD: ${APP_SHARED_PASSWORD:-}
       AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:-}
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s
       timeout: 5s
       retries: 3

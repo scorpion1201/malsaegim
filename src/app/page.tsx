@@ -1,5 +1,5 @@
-import { TranscribeWorkspace } from './_components/Workspace/TranscribeWorkspace';
+import { HomeGate } from './_components/OnDevice/HomeGate';
 
-const Home = () => <TranscribeWorkspace />;
+const Home = () => <HomeGate />;
 
 export default Home;

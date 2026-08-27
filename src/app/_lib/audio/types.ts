@@ -23,6 +23,17 @@ export const DEFAULT_SPLIT_OPTIONS: SplitOptions = {
   silenceDb: -40,
 };
 
+/**
+ * On-Device(whisper.cpp) 용 분할 — 30초 한 윈도우 안에 들어가게 자른다.
+ * whisper_full 은 오디오 끝에 닿는 윈도우만 그대로 받아들이고, 그 앞 윈도우는 타임스탬프 판정에 실패하면
+ * 온도 폴백(디코더 5개 × 여러 온도)으로 4~5배 느려진다. 무음 경계 ≤30초 조각이면 조각마다 한 윈도우라 항상 빠른 경로다.
+ */
+export const ON_DEVICE_SPLIT_OPTIONS: SplitOptions = {
+  targetSecs: 25,
+  maxSecs: 30,
+  silenceDb: -40,
+};
+
 /** 재인식용 추출 구간. endMs === null 은 "스트림 끝까지"(마지막 조각 규칙). */
 export type ExtractRange = {
   index: number;

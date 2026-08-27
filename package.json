@@ -8,7 +8,9 @@
     "dev": "yarn build:wasm && next dev",
     "build": "yarn build:wasm && next build",
     "start": "next start",
-    "lint": "next typegen && tsc --noEmit && eslint"
+    "lint": "next typegen && tsc --noEmit && eslint",
+    "models": "docker build --target models --build-arg WITH_MODELS=1 -o public/models .",
+    "models:native": "sh scripts/models/build-all.sh public/models"
   },
   "dependencies": {
     "@rhwp/core": "~0.8.4",

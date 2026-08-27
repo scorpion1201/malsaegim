@@ -3,11 +3,13 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assembleTranscript, type ChunkMeta, type ChunkOutcome } from '@/app/_lib/asr/assembleTranscript';
-import { CLIENT_CONCURRENCY, createTranscribeQueue, type TranscribeQueue } from '@/app/_lib/asr/transcribeQueue';
+import type { EngineKind, TranscribeEngine } from '@/app/_lib/asr/asrEngine';
+import { selectEngine } from '@/app/_lib/asr/selectEngine';
+import { createTranscribeQueue, type TranscribeQueue } from '@/app/_lib/asr/transcribeQueue';
 import { sha256Hex } from '@/app/_lib/audio/fileHash';
 import { deleteRecording, deleteRecordingParts, getRecording, putRecording } from '@/app/_lib/audio/recordingStore';
 import { extractAudioRanges, splitAudioBuffer, type SplitHandle } from '@/app/_lib/audio/splitAudioFile';
-import { DEFAULT_SPLIT_OPTIONS, type AudioChunk, type ExtractRange } from '@/app/_lib/audio/types';
+import { DEFAULT_SPLIT_OPTIONS, ON_DEVICE_SPLIT_OPTIONS, type AudioChunk, type ExtractRange, type SplitOptions } from '@/app/_lib/audio/types';
 import { extractWavRanges } from '@/app/_lib/audio/wav';
 import { blocksToTiptapDoc } from '@/app/_lib/editor/blocksToTiptapDoc';
 import { patchFailedParagraph, upgradeFailedPlaceholders } from '@/app/_lib/editor/patchTranscript';
@@ -29,11 +31,14 @@ import {
 } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import { normalizePageLayout, type PageLayout } from '@/app/_lib/hwp/pageLayout';
+import { formatMb } from '@/app/_lib/engine/malsaegimEngine';
+import { startLiveRecognizer, type LiveRecognizer } from '@/app/_lib/engine/malsaegimEngine';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { Editor } from '../Editor/Editor';
 import { LayoutPanel } from '../LayoutPanel/LayoutPanel';
+import { useModelDownload } from '../OnDevice/ModelProvider';
 import { PlayerBar, type PlayerBarHandle } from '../PlayerBar/PlayerBar';
 import { RecordingBar } from '../RecordingBar/RecordingBar';
 import { useDialog } from '../Dialog/DialogProvider';
@@ -50,8 +55,30 @@ type RunMode = 'new' | 'retry';
 
 const TRANSCRIBE_TOAST = 'transcribe';
 const RETRY_TOAST = 'retry';
+const MODEL_TOAST = 'model';
 
 const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '');
+
+const AUDIO_MIME_BY_EXT: Record<string, string> = {
+  mp3: 'audio/mpeg',
+  m4a: 'audio/mp4',
+  mp4: 'audio/mp4',
+  aac: 'audio/aac',
+  wav: 'audio/wav',
+  flac: 'audio/flac',
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/opus',
+  aiff: 'audio/aiff',
+  aif: 'audio/aiff',
+  caf: 'audio/x-caf',
+  webm: 'audio/webm',
+  weba: 'audio/webm',
+};
+
+/** 브라우저가 준 MIME 을 우선 쓰고, 없으면 확장자로 추정한다 (불러온 원본 재생용) */
+const audioMime = (file: File): string =>
+  file.type || AUDIO_MIME_BY_EXT[file.name.split('.').pop()?.toLowerCase() ?? ''] || 'application/octet-stream';
 
 const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
@@ -95,6 +122,27 @@ export const TranscribeWorkspace = () => {
   const toast = useToast();
   const dialog = useDialog();
   const router = useRouter();
+  const model = useModelDownload();
+  const modelRef = useRef(model);
+  useEffect(() => {
+    modelRef.current = model;
+  });
+  const [engineKind, setEngineKind] = useState<EngineKind>('byok');
+  /** On-Device 진행률: 끝난 조각 길이 + 진행 중 조각 길이 × 조각 내부 진행률, 전체 길이 대비. chunkMs 는 조각 번호별 길이 */
+  const onDeviceProgressRef = useRef({ doneMs: 0, currentMs: 0, currentRatio: 0, enqueuedMs: 0, chunkMs: new Map<number, number>() });
+  const modelToastRef = useRef(false);
+  /** 전체 길이(ms) — 진행률 분모. durationMs 상태의 ref 사본 */
+  const durationRef = useRef<number | null>(null);
+  const [livePartial, setLivePartial] = useState('');
+  const [liveLagMs, setLiveLagMs] = useState(0);
+  const [liveRestarting, setLiveRestarting] = useState(false);
+  /** 이번 녹음이 On-Device(sherpa) 경로인지 — 렌더에서 ref 를 읽지 않으려고 상태로 둔다 */
+  const [onDeviceLive, setOnDeviceLive] = useState(false);
+  const liveRecognizerRef = useRef<LiveRecognizer | null>(null);
+  /** On-Device 녹음의 확정 세그먼트 번호 — 조각 번호와 무관하게 0부터 */
+  const liveIndexRef = useRef(0);
+  /** 엔진으로 보낸 오디오 시각 — 워커가 처리한 시각과의 차이가 지연 */
+  const liveSentMsRef = useRef(0);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [mode, setMode] = useState<RunMode>('new');
@@ -103,6 +151,9 @@ export const TranscribeWorkspace = () => {
   const [outcomes, setOutcomes] = useState<Map<number, ChunkOutcome>>(new Map());
   const [expectedCount, setExpectedCount] = useState<number | null>(null);
   const [durationMs, setDurationMs] = useState<number | null>(null);
+  useEffect(() => {
+    durationRef.current = durationMs;
+  }, [durationMs]);
   const [editorValue, setEditorValue] = useState<TiptapDoc | null>(null);
   const [currentDoc, setCurrentDoc] = useState<TiptapDoc | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
@@ -125,6 +176,8 @@ export const TranscribeWorkspace = () => {
   /** 새 파일 노트의 id — 원본 Blob 을 인식이 끝나기 전에 IndexedDB 에 넣어야 해서 미리 정한다 */
   const pendingIdRef = useRef<string | null>(null);
   const stoppingRef = useRef(false);
+  /** 이번 새 노트 인식에 쓴 분할 옵션 — 엔진에 따라 다르다 (노트에 참고용으로 저장) */
+  const splitOptionsRef = useRef<SplitOptions>(DEFAULT_SPLIT_OPTIONS);
 
   // 녹음 노트는 조각이 짧아(문장 쉼마다) 25초 안쪽의 연속 조각을 한 문단으로 합친다
   const liveNote = audioKindOf(activeProject?.audio) === 'recording';
@@ -174,7 +227,7 @@ export const TranscribeWorkspace = () => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setEditorValue(doc);
     setDoc(doc);
-    if (phase === 'transcribing') {
+    if (phase === 'transcribing' && engineKind === 'byok') {
       const total = expectedCount ?? assembled.readyCount + assembled.heldCount;
       toast.update(TRANSCRIBE_TOAST, {
         title: `인식 중 · 조각 ${assembled.readyCount}/${expectedCount ?? `${total}+`}`,
@@ -183,7 +236,17 @@ export const TranscribeWorkspace = () => {
         meta: expectedCount ? `${Math.round((assembled.readyCount / expectedCount) * 100)}%` : undefined,
       });
     }
-  }, [assembled, phase, mode, expectedCount, setDoc, toast]);
+  }, [assembled, phase, mode, expectedCount, engineKind, setDoc, toast]);
+
+  // 인식 시작 가드가 띄운 모델 내려받기 토스트를 진행률에 맞춰 갱신한다
+  useEffect(() => {
+    if (!modelToastRef.current || model.status !== 'downloading') return;
+    toast.update(MODEL_TOAST, {
+      title: `On-Device 모델 내려받는 중 · ${model.percent}%`,
+      meta: `${formatMb(model.receivedBytes)} / ${formatMb(model.totalBytes)} MB`,
+      progress: model.percent,
+    });
+  }, [model.status, model.percent, model.receivedBytes, model.totalBytes, toast]);
 
   // 새 인식이 전부 끝나면 노트로 저장하고 검수 단계로
   useEffect(() => {
@@ -199,7 +262,7 @@ export const TranscribeWorkspace = () => {
       createdAt: activeRef.current?.createdAt ?? now,
       updatedAt: now,
       audio,
-      splitOptions: isRecording ? null : DEFAULT_SPLIT_OPTIONS,
+      splitOptions: isRecording ? null : splitOptionsRef.current,
       chunks,
       doc,
     };
@@ -262,9 +325,18 @@ export const TranscribeWorkspace = () => {
   const stop = useCallback(() => {
     splitRef.current?.cancel();
     queueRef.current?.abort();
+    liveRecognizerRef.current?.terminate();
     splitRef.current = null;
     queueRef.current = null;
+    liveRecognizerRef.current = null;
+    setOnDeviceLive(false);
   }, []);
+
+  useEffect(() => {
+    if (!liveRestarting) return;
+    const timer = setTimeout(() => setLiveRestarting(false), 3000);
+    return () => clearTimeout(timer);
+  }, [liveRestarting]);
 
   useEffect(() => stop, [stop]);
 
@@ -272,6 +344,7 @@ export const TranscribeWorkspace = () => {
     (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
       const expired = message.includes('401');
+      const modelBroken = message.includes('모델을 다시 내려받아야 합니다');
       setPhase('error');
       stop();
       toast.dismiss(TRANSCRIBE_TOAST);
@@ -281,170 +354,266 @@ export const TranscribeWorkspace = () => {
         title: expired ? '로그인이 만료되었습니다' : '인식을 계속할 수 없습니다',
         description: expired ? '편집 내용은 이 브라우저에 저장돼 있습니다.' : message,
         duration: 0,
-        actions: expired ? [{ label: '다시 로그인', primary: true, onClick: () => window.location.reload() }] : undefined,
+        actions: expired
+          ? [{ label: '다시 로그인', primary: true, onClick: () => window.location.reload() }]
+          : modelBroken
+            ? [{ label: '다시 받기', primary: true, onClick: () => modelRef.current.start() }]
+            : undefined,
       });
     },
     [stop, toast],
   );
 
-  /** 서버는 프록시일 뿐이라 설정 페이지의 API 설정이 없으면 인식을 시작할 수 없다 */
-  const requireByok = useCallback((): boolean => {
-    if (isByokComplete(readByokSettings())) return true;
-    toast.show({
-      kind: 'error',
-      title: '음성 인식 API 가 설정되지 않았습니다',
-      description: '설정에서 API Base URL · API Key · 모델 이름을 저장한 뒤 다시 시도하세요.',
-      duration: 8000,
-      actions: [{ label: '설정 열기', primary: true, onClick: () => router.push('/settings') }],
-    });
-    return false;
+  /**
+   * 인식을 시작할 엔진. BYOK 가 완비돼 있으면 바로, 아니면 On-Device 모델이 준비될 때까지 기다린다
+   * (없으면 내려받기 시작 + 진행 토스트). 불가하면 안내 토스트를 띄우고 null
+   */
+  const ensureEngine = useCallback(async (): Promise<TranscribeEngine | null> => {
+    const byok = isByokComplete(readByokSettings());
+    const current = modelRef.current;
+    if (!byok) {
+      if (current.status === 'unavailable') {
+        toast.show({
+          kind: 'error',
+          title: 'On-Device 인식을 쓸 수 없습니다',
+          description: `${current.message ?? '서버에 모델이 없습니다'}. 설정에서 API 키를 넣거나 모델이 포함된 빌드가 필요합니다`,
+          duration: 8000,
+          actions: [{ label: '설정 열기', primary: true, onClick: () => router.push('/settings') }],
+        });
+        return null;
+      }
+      if (current.status !== 'ready') {
+        modelToastRef.current = true;
+        toast.show({ id: MODEL_TOAST, kind: 'progress', title: 'On-Device 모델 내려받는 중', progress: current.percent });
+        const ok = await current.whenReady();
+        modelToastRef.current = false;
+        if (!ok) {
+          toast.update(MODEL_TOAST, {
+            kind: 'error',
+            title: '모델을 내려받지 못했습니다',
+            description: modelRef.current.message ?? undefined,
+            progress: undefined,
+            meta: undefined,
+            duration: 8000,
+            actions: [{ label: '다시 시도', primary: true, onClick: () => modelRef.current.retry() }],
+          });
+          return null;
+        }
+        toast.dismiss(MODEL_TOAST);
+      }
+    }
+    const engine = selectEngine(modelRef.current.manifest);
+    if (!engine) {
+      toast.show({
+        kind: 'error',
+        title: '음성 인식을 시작할 수 없습니다',
+        description: '설정에서 API 키를 넣거나 모델이 포함된 빌드가 필요합니다',
+        duration: 8000,
+        actions: [{ label: '설정 열기', primary: true, onClick: () => router.push('/settings') }],
+      });
+      return null;
+    }
+    setEngineKind(engine.kind);
+    return engine;
   }, [toast, router]);
 
+  const updateOnDeviceToast = useCallback(() => {
+    const progress = onDeviceProgressRef.current;
+    const total = Math.max(1, durationRef.current ?? progress.enqueuedMs);
+    const percent = Math.min(100, Math.round(((progress.doneMs + progress.currentMs * progress.currentRatio) / total) * 100));
+    toast.update(TRANSCRIBE_TOAST, { title: `인식 중 ${percent}%`, description: undefined, meta: undefined, progress: percent });
+  }, [toast]);
+
   const makeQueue = useCallback(
-    (onOutcome: (outcome: ChunkOutcome) => void) =>
-      createTranscribeQueue(
-        { concurrency: CLIENT_CONCURRENCY, maxRetries: 3 },
-        { onOutcome, onFatal: failWith },
-      ),
-    [failWith],
+    (engine: TranscribeEngine, onOutcome: (outcome: ChunkOutcome) => void): TranscribeQueue => {
+      onDeviceProgressRef.current = { doneMs: 0, currentMs: 0, currentRatio: 0, enqueuedMs: 0, chunkMs: new Map() };
+      const queue = createTranscribeQueue(
+        { engine, maxRetries: 3 },
+        {
+          onOutcome: (outcome) => {
+            if (engine.kind === 'ondevice') {
+              const progress = onDeviceProgressRef.current;
+              progress.doneMs += outcome.meta.endMs - outcome.meta.startMs;
+              progress.currentMs = 0;
+              progress.currentRatio = 0;
+              updateOnDeviceToast();
+            }
+            onOutcome(outcome);
+          },
+          onFatal: failWith,
+          onProgress:
+            engine.kind === 'ondevice'
+              ? (index, ratio) => {
+                  const progress = onDeviceProgressRef.current;
+                  progress.currentMs = progress.chunkMs.get(index) ?? 0;
+                  progress.currentRatio = ratio;
+                  updateOnDeviceToast();
+                }
+              : undefined,
+        },
+      );
+      if (engine.kind !== 'ondevice') return queue;
+      // 조각 길이를 알아야 진행률을 낼 수 있다 — enqueue 를 감싸 번호별 길이를 적어 둔다
+      return {
+        ...queue,
+        enqueue: (chunk: AudioChunk) => {
+          const progress = onDeviceProgressRef.current;
+          progress.enqueuedMs += chunk.endMs - chunk.startMs;
+          progress.chunkMs.set(chunk.index, chunk.endMs - chunk.startMs);
+          queue.enqueue(chunk);
+        },
+      };
+    },
+    [failWith, updateOnDeviceToast],
   );
 
   /** 새 노트: 무음 분할 → 전 조각 인식 */
   const beginNew = useCallback(
     (selected: File, buffer: ArrayBuffer, sha256: string) => {
-      if (!requireByok()) return;
-      stop();
-      setMode('new');
-      setActive(null);
-      pendingAudioRef.current = null;
-      pendingRetryRef.current = null;
-      pendingIdRef.current = newProjectId();
-      const id = pendingIdRef.current;
-      setSource(selected);
-      setTitle(stripExtension(selected.name));
-      setOutcomes(new Map());
-      setExpectedCount(null);
-      setDurationMs(null);
-      setSavedAt(null);
-      setEditorValue(null);
-      setDoc(null);
-      setPhase('splitting');
-      toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '오디오를 나누는 중…', progress: 0 });
+      void (async () => {
+        const engine = await ensureEngine();
+        if (!engine) return;
+        stop();
+        setMode('new');
+        setActive(null);
+        pendingAudioRef.current = null;
+        pendingRetryRef.current = null;
+        pendingIdRef.current = newProjectId();
+        const id = pendingIdRef.current;
+        setSource(selected);
+        setTitle(stripExtension(selected.name));
+        setOutcomes(new Map());
+        setExpectedCount(null);
+        setDurationMs(null);
+        setSavedAt(null);
+        setEditorValue(null);
+        setDoc(null);
+        setPhase('splitting');
+        toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '오디오를 나누는 중…', progress: 0 });
 
-      const queue = makeQueue((outcome) =>
-        setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)),
-      );
-      queueRef.current = queue;
+        const queue = makeQueue(engine, (outcome) =>
+          setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)),
+        );
+        queueRef.current = queue;
 
-      const handle = splitAudioBuffer(buffer, (chunk) => {
-        setPhase((current) => (current === 'splitting' ? 'transcribing' : current));
-        queue.enqueue(chunk);
-      });
-      splitRef.current = handle;
+        splitOptionsRef.current = engine.kind === 'ondevice' ? ON_DEVICE_SPLIT_OPTIONS : DEFAULT_SPLIT_OPTIONS;
+        const handle = splitAudioBuffer(
+          buffer,
+          (chunk) => {
+            setPhase((current) => (current === 'splitting' ? 'transcribing' : current));
+            queue.enqueue(chunk);
+          },
+          splitOptionsRef.current,
+        );
+        splitRef.current = handle;
 
-      handle.done
-        .then((summary) => {
-          setExpectedCount(summary.chunkCount);
-          setDurationMs(summary.totalMs);
-          pendingAudioRef.current = {
-            kind: 'file',
-            name: selected.name,
-            size: selected.size,
-            sha256,
-            durationMs: summary.totalMs,
-            mimeType: selected.type || undefined,
-          };
-          // 원본을 브라우저에 남겨 두면 다음에 열 때 재생·재인식에 파일을 다시 고를 필요가 없다
-          void putRecording({
-            id,
-            blob: selected,
-            mimeType: selected.type || 'audio/mpeg',
-            durationMs: summary.totalMs,
-            updatedAt: Date.now(),
-          }).catch(() => {});
-          return queue.close();
-        })
-        .catch(failWith);
+        handle.done
+          .then((summary) => {
+            setExpectedCount(summary.chunkCount);
+            setDurationMs(summary.totalMs);
+            pendingAudioRef.current = {
+              kind: 'file',
+              name: selected.name,
+              size: selected.size,
+              sha256,
+              durationMs: summary.totalMs,
+              mimeType: audioMime(selected),
+            };
+            // 원본을 브라우저에 남겨 두면 다음에 열 때 재생·재인식에 파일을 다시 고를 필요가 없다
+            void putRecording({
+              id,
+              blob: selected,
+              mimeType: audioMime(selected),
+              durationMs: summary.totalMs,
+              updatedAt: Date.now(),
+            }).catch(() => {});
+            return queue.close();
+          })
+          .catch(failWith);
+      })();
     },
-    [stop, setActive, setDoc, makeQueue, failWith, toast, requireByok],
+    [stop, setActive, setDoc, makeQueue, failWith, toast, ensureEngine],
   );
 
   /** 재인식: 저장된 시간 구간만 추출해 실패 조각만 다시 보낸다 */
   const beginRetry = useCallback(
     (extract: RangeExtractor, failed: StoredChunk[], project: Project) => {
-      if (!requireByok()) return;
-      stop();
-      setMode('retry');
-      setRetryDone(0);
-      setRetryTotal(failed.length);
-      setPhase('transcribing');
-      toast.show({
-        id: RETRY_TOAST,
-        kind: 'progress',
-        title: `재인식 중 · 0/${failed.length}`,
-        description: failed.length === 1 ? '실패했던 조각 하나만 다시 보냅니다' : `실패했던 ${failed.length}개 조각만 다시 보냅니다`,
-        progress: 0,
-      });
-
-      let done = 0;
-      const queue = makeQueue((outcome) => {
-        done += 1;
-        setRetryDone(done);
-        toast.update(RETRY_TOAST, {
-          title: `재인식 중 · ${done}/${failed.length}`,
-          progress: (done / failed.length) * 100,
+      void (async () => {
+        const engine = await ensureEngine();
+        if (!engine) return;
+        stop();
+        setMode('retry');
+        setRetryDone(0);
+        setRetryTotal(failed.length);
+        setPhase('transcribing');
+        toast.show({
+          id: RETRY_TOAST,
+          kind: 'progress',
+          title: `재인식 중 · 0/${failed.length}`,
+          description: failed.length === 1 ? '실패했던 조각 하나만 다시 보냅니다' : `실패했던 ${failed.length}개 조각만 다시 보냅니다`,
+          progress: 0,
         });
-        if (outcome.kind !== 'ok') return;
-        const current = activeRef.current;
-        const doc = docRef.current;
-        if (!current || !doc) return;
-        const { doc: patchedDoc, patched } = patchFailedParagraph(doc, outcome.meta.startMs, outcome.text);
-        const chunks = current.chunks.map((chunk) =>
-          chunk.index === outcome.meta.index ? { ...chunk, status: 'ok' as const } : chunk,
-        );
-        activeRef.current = { ...current, chunks };
-        setActiveProject(activeRef.current);
-        if (patched) {
-          docRef.current = patchedDoc;
-          setCurrentDoc(patchedDoc);
-          setEditorValue(patchedDoc);
-        }
-      });
-      queueRef.current = queue;
 
-      const handle = extract(toExtractRanges(failed, project.chunks), (chunk) => queue.enqueue(chunk));
-      splitRef.current = handle;
-
-      handle.done
-        .then((summary) => {
-          const stored = project.audio?.durationMs;
-          if (typeof stored === 'number' && Math.abs(summary.totalMs - stored) > 50) {
-            console.warn(`[retry] 디코드 길이가 저장값과 다릅니다: stored=${stored}ms decoded=${summary.totalMs}ms`);
-          }
-          return queue.close();
-        })
-        .then(() => {
-          const current = activeRef.current;
-          let remaining = 0;
-          if (current) {
-            const updated: Project = { ...current, doc: docRef.current ?? current.doc, updatedAt: Date.now() };
-            setActive(updated);
-            persist(updated);
-            remaining = failedChunksOf(updated).length;
-          }
-          setMode('new');
-          setPhase('review');
+        let done = 0;
+        const queue = makeQueue(engine, (outcome) => {
+          done += 1;
+          setRetryDone(done);
           toast.update(RETRY_TOAST, {
-            kind: remaining > 0 ? 'error' : 'success',
-            title: remaining > 0 ? `재인식 끝 · 아직 실패 ${remaining}개` : '재인식 완료',
-            description: remaining > 0 ? '잠시 후 새로고침을 다시 눌러 보세요.' : undefined,
-            progress: undefined,
-            duration: remaining > 0 ? 8000 : 4000,
+            title: `재인식 중 · ${done}/${failed.length}`,
+            progress: (done / failed.length) * 100,
           });
-        })
-        .catch(failWith);
+          if (outcome.kind !== 'ok') return;
+          const current = activeRef.current;
+          const doc = docRef.current;
+          if (!current || !doc) return;
+          const { doc: patchedDoc, patched } = patchFailedParagraph(doc, outcome.meta.startMs, outcome.text);
+          const chunks = current.chunks.map((chunk) =>
+            chunk.index === outcome.meta.index ? { ...chunk, status: 'ok' as const } : chunk,
+          );
+          activeRef.current = { ...current, chunks };
+          setActiveProject(activeRef.current);
+          if (patched) {
+            docRef.current = patchedDoc;
+            setCurrentDoc(patchedDoc);
+            setEditorValue(patchedDoc);
+          }
+        });
+        queueRef.current = queue;
+
+        const handle = extract(toExtractRanges(failed, project.chunks), (chunk) => queue.enqueue(chunk));
+        splitRef.current = handle;
+
+        handle.done
+          .then((summary) => {
+            const stored = project.audio?.durationMs;
+            if (typeof stored === 'number' && Math.abs(summary.totalMs - stored) > 50) {
+              console.warn(`[retry] 디코드 길이가 저장값과 다릅니다: stored=${stored}ms decoded=${summary.totalMs}ms`);
+            }
+            return queue.close();
+          })
+          .then(() => {
+            const current = activeRef.current;
+            let remaining = 0;
+            if (current) {
+              const updated: Project = { ...current, doc: docRef.current ?? current.doc, updatedAt: Date.now() };
+              setActive(updated);
+              persist(updated);
+              remaining = failedChunksOf(updated).length;
+            }
+            setMode('new');
+            setPhase('review');
+            toast.update(RETRY_TOAST, {
+              kind: remaining > 0 ? 'error' : 'success',
+              title: remaining > 0 ? `재인식 끝 · 아직 실패 ${remaining}개` : '재인식 완료',
+              description: remaining > 0 ? '잠시 후 새로고침을 다시 눌러 보세요.' : undefined,
+              progress: undefined,
+              duration: remaining > 0 ? 8000 : 4000,
+            });
+          })
+          .catch(failWith);
+      })();
     },
-    [stop, makeQueue, setActive, persist, failWith, toast, requireByok],
+    [stop, makeQueue, setActive, persist, failWith, toast, ensureEngine],
   );
 
   /** 파일 선택: 같은 오디오면 재생 연결·부분 재인식, 다른 파일이면 새 노트 */
@@ -463,7 +632,7 @@ export const TranscribeWorkspace = () => {
           void putRecording({
             id: active.id,
             blob: selected,
-            mimeType: selected.type || 'audio/mpeg',
+            mimeType: audioMime(selected),
             durationMs: active.audio.durationMs,
             updatedAt: Date.now(),
           }).catch(() => {});
@@ -662,9 +831,19 @@ export const TranscribeWorkspace = () => {
   );
 
   const live = useLiveRecording({
-    onChunk: (chunk) => queueRef.current?.enqueue(chunk),
-    onSkipped: (meta: ChunkMeta) =>
-      setOutcomes((previous) => new Map(previous).set(meta.index, { kind: 'ok', meta, text: '' })),
+    // On-Device 녹음은 조각 단위 큐를 쓰지 않는다 — 세그먼트가 outcomes 에 바로 들어간다
+    onChunk: (chunk) => {
+      if (!liveRecognizerRef.current) queueRef.current?.enqueue(chunk);
+    },
+    onSkipped: (meta: ChunkMeta) => {
+      if (!liveRecognizerRef.current) setOutcomes((previous) => new Map(previous).set(meta.index, { kind: 'ok', meta, text: '' }));
+    },
+    onFrame: (frame) => {
+      const recognizer = liveRecognizerRef.current;
+      if (!recognizer) return;
+      liveSentMsRef.current += (frame.length / 16000) * 1000;
+      recognizer.push(frame);
+    },
     onStoreError: (error) =>
       toast.show({ kind: 'error', title: '녹음 조각을 저장하지 못했습니다', description: error.message }),
   });
@@ -700,53 +879,92 @@ export const TranscribeWorkspace = () => {
     setPhase('review');
   }, [phase, stop, setActive, persist, setDoc]);
 
-  /** 녹음 시작: 빈 녹음 노트를 먼저 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
+  /** 녹음 시작: 엔진을 확보하고(On-Device 면 sherpa 워커까지 띄운 뒤) 빈 녹음 노트를 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
   const startRecording = useCallback(() => {
     if (phase === 'splitting' || phase === 'transcribing' || phase === 'recording') return;
-    if (!requireByok()) return;
-    stop();
-    const now = Date.now();
-    const id = newProjectId();
-    const noteTitle = `녹음 ${formatDateTime(now)}`;
-    const audio: ProjectAudio = {
-      kind: 'recording',
-      name: `${noteTitle}.wav`,
-      size: 0,
-      sha256: '',
-      durationMs: 0,
-      mimeType: 'audio/wav',
-    };
-    const project: Project = { id, title: noteTitle, createdAt: now, updatedAt: now, audio, splitOptions: null, chunks: [], doc: EMPTY_DOC };
-    setMode('new');
-    setActive(project);
-    persist(project);
-    pendingAudioRef.current = audio;
-    pendingRetryRef.current = null;
-    setSource(null);
-    setTitle(noteTitle);
-    setOutcomes(new Map());
-    setExpectedCount(null);
-    setDurationMs(null);
-    setEditorValue(EMPTY_DOC);
-    setDoc(EMPTY_DOC);
-    setCurrentMs(0);
-    queueRef.current = makeQueue((outcome) =>
-      setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)),
-    );
-    setPhase('recording');
-    live.start(id).catch((error: unknown) => {
-      queueRef.current?.abort();
-      queueRef.current = null;
-      deleteProject(window.localStorage, id);
-      resetWorkspace();
-      refreshProjects();
-      toast.show({
-        kind: 'error',
-        title: '마이크를 시작할 수 없습니다',
-        description: error instanceof Error ? error.message : String(error),
+    void (async () => {
+      const engine = await ensureEngine();
+      if (!engine) return;
+      stop();
+      setLivePartial('');
+      setLiveLagMs(0);
+      liveIndexRef.current = 0;
+      liveSentMsRef.current = 0;
+      setOnDeviceLive(engine.kind === 'ondevice');
+      if (engine.kind === 'ondevice') {
+        const manifest = modelRef.current.manifest;
+        if (!manifest) return;
+        try {
+          liveRecognizerRef.current = await startLiveRecognizer(manifest, {
+            onPartial: (text, processedMs) => {
+              setLivePartial(text);
+              setLiveLagMs(liveSentMsRef.current - processedMs);
+            },
+            onFinal: (segment) => {
+              const index = liveIndexRef.current;
+              liveIndexRef.current += 1;
+              const meta: ChunkMeta = { index, startMs: segment.startMs, endMs: segment.endMs };
+              setOutcomes((previous) => new Map(previous).set(index, { kind: 'ok', meta, text: segment.text }));
+            },
+            onRestart: () => setLiveRestarting(true),
+            onError: (error) =>
+              toast.show({ kind: 'error', title: '실시간 인식이 멈췄습니다', description: `${error.message} · 녹음은 계속 저장됩니다` }),
+          });
+        } catch (error) {
+          setOnDeviceLive(false);
+          const message = error instanceof Error ? error.message : String(error);
+          toast.show({
+            kind: 'error',
+            title: '실시간 인식 엔진을 시작할 수 없습니다',
+            description: message,
+            actions: message.includes('다시 내려받아야') ? [{ label: '다시 받기', primary: true, onClick: () => modelRef.current.start() }] : undefined,
+          });
+          return;
+        }
+      }
+      const now = Date.now();
+      const id = newProjectId();
+      const noteTitle = `녹음 ${formatDateTime(now)}`;
+      const audio: ProjectAudio = {
+        kind: 'recording',
+        name: `${noteTitle}.wav`,
+        size: 0,
+        sha256: '',
+        durationMs: 0,
+        mimeType: 'audio/wav',
+      };
+      const project: Project = { id, title: noteTitle, createdAt: now, updatedAt: now, audio, splitOptions: null, chunks: [], doc: EMPTY_DOC };
+      setMode('new');
+      setActive(project);
+      persist(project);
+      pendingAudioRef.current = audio;
+      pendingRetryRef.current = null;
+      setSource(null);
+      setTitle(noteTitle);
+      setOutcomes(new Map());
+      setExpectedCount(null);
+      setDurationMs(null);
+      setEditorValue(EMPTY_DOC);
+      setDoc(EMPTY_DOC);
+      setCurrentMs(0);
+      queueRef.current =
+        engine.kind === 'ondevice'
+          ? null
+          : makeQueue(engine, (outcome) => setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)));
+      setPhase('recording');
+      live.start(id).catch((error: unknown) => {
+        stop();
+        deleteProject(window.localStorage, id);
+        resetWorkspace();
+        refreshProjects();
+        toast.show({
+          kind: 'error',
+          title: '마이크를 시작할 수 없습니다',
+          description: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
-  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, requireByok]);
+    })();
+  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, ensureEngine]);
 
   /** 녹음 중지: 마지막 조각까지 보내고, WAV 를 저장한 뒤 남은 인식이 끝나면 완료 효과가 노트를 확정한다 */
   const stopRecording = useCallback(() => {
@@ -755,12 +973,23 @@ export const TranscribeWorkspace = () => {
     toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '녹음을 마무리하는 중…', progress: 0 });
     live
       .stop()
-      .then((result) => {
+      .then(async (result) => {
         const audio = pendingAudioRef.current;
         pendingAudioRef.current = audio ? { ...audio, durationMs: result.durationMs, size: result.blob.size } : audio;
         setSource(result.blob);
         setDurationMs(result.durationMs);
-        setExpectedCount(result.chunkCount);
+        durationRef.current = result.durationMs;
+        const recognizer = liveRecognizerRef.current;
+        if (recognizer) {
+          // 마지막 세그먼트(finish 중 final)가 들어온 뒤에 기대 개수를 정한다
+          await recognizer.finish();
+          liveRecognizerRef.current = null;
+          setOnDeviceLive(false);
+          setLivePartial('');
+          setExpectedCount(liveIndexRef.current);
+        } else {
+          setExpectedCount(result.chunkCount);
+        }
         setPhase('transcribing');
         void queueRef.current?.close();
       })
@@ -902,7 +1131,19 @@ export const TranscribeWorkspace = () => {
   const liveRow = recording
     ? {
         startMs: live.emittedMs,
-        label: live.status === 'paused' ? '일시정지' : pendingChunks > 0 ? `인식 중 · 대기 ${pendingChunks}` : '듣는 중',
+        partial: onDeviceLive && live.status !== 'paused' ? livePartial : undefined,
+        label:
+          live.status === 'paused'
+            ? '일시정지'
+            : liveRestarting
+              ? '인식 엔진 재시작'
+              : onDeviceLive
+                ? liveLagMs > 3000
+                  ? '처리 지연'
+                  : '듣는 중'
+                : pendingChunks > 0
+                  ? `인식 중 · 대기 ${pendingChunks}`
+                  : '듣는 중',
       }
     : null;
 

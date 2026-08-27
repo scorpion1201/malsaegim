@@ -142,6 +142,18 @@ export const extractWavRanges = (
   };
 };
 
+/** PCM16 WAV → Float32 샘플 (모노 기준; 다채널이면 첫 채널) — On-Device 엔진 입력 */
+export const wavToFloat32 = (bytes: Uint8Array): Float32Array => {
+  const info = readWavInfo(bytes);
+  if (!info || info.bitsPerSample !== 16) throw new Error('PCM16 WAV 가 아닙니다');
+  const frameBytes = 2 * info.channels;
+  const frames = Math.floor(info.dataBytes / frameBytes);
+  const view = new DataView(bytes.buffer, bytes.byteOffset + info.dataOffset, frames * frameBytes);
+  const out = new Float32Array(frames);
+  for (let i = 0; i < frames; i += 1) out[i] = view.getInt16(i * frameBytes, true) / 0x8000;
+  return out;
+};
+
 /** 조각(PCM16 바이트) 목록 + 헤더 → 파일 하나. 복사 없이 Blob 으로 잇는다 */
 export const buildWavBlob = (parts: ArrayBuffer[], sampleRate: number): Blob => {
   const dataBytes = parts.reduce((sum, part) => sum + part.byteLength, 0);

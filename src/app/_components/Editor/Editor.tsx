@@ -21,7 +21,7 @@ export type EditorProps = {
   onRetryChunk: (startMs: number, endMs: number) => void;
   onToggleTimestamps: () => void;
   /** 녹음 중: 본문 아래에 "다음 조각 시작 시각 + 상태" 줄을 깜박이는 커서와 함께 보여준다 */
-  live?: { startMs: number; label: string } | null;
+  live?: { startMs: number; label: string; partial?: string } | null;
   layoutOpen: boolean;
   layoutDisabled: boolean;
   onToggleLayout: () => void;
@@ -135,8 +135,8 @@ export const Editor = ({
         {live ? (
           <p className={styles.liveRow} aria-live="polite">
             <span className={styles.liveChip}>{formatTimestamp(live.startMs)}</span>
-            <span className={styles.liveText}>
-              {live.label}
+            <span className={live.partial ? styles.livePartial : styles.liveText}>
+              {live.partial || live.label}
               <span className={styles.caret} />
             </span>
           </p>

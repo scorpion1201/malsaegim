@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChunkMeta } from '@/app/_lib/asr/assembleTranscript';
 import { DEFAULT_LIVE_CHUNKER_OPTIONS, LiveChunker, type LiveChunk } from '@/app/_lib/audio/liveChunker';
-import { resampleLinear, startMicCapture, type MicCapture } from '@/app/_lib/audio/micCapture';
+import { startMicCapture, type MicCapture } from '@/app/_lib/audio/micCapture';
 import {
   deleteRecordingParts,
   listRecordingParts,
@@ -28,6 +28,8 @@ type LiveRecordingHandlers = {
   onSkipped: (meta: ChunkMeta) => void;
   /** IndexedDB 조각 저장 실패 (녹음은 계속된다) */
   onStoreError: (error: Error) => void;
+  /** 시간축에 들어간 100ms 프레임 — 실시간 엔진용 */
+  onFrame?: (frame: Float32Array) => void;
 };
 
 /** 인식 API 에 보내는 최소 길이 — 이보다 짧은 조각은 저장만 한다 */
@@ -103,12 +105,13 @@ export const useLiveRecording = (handlers: LiveRecordingHandlers) => {
     );
     chunkerRef.current = chunker;
 
-    let sampleRate = RECORDING_SAMPLE_RATE;
     try {
+      // startMicCapture 가 네이티브→16kHz 연속 리샘플까지 해서 항상 16kHz 를 준다.
+      // 저장·BYOK 청크는 청커가 문장 단위로 자르고, sherpa 실시간은 게이트 없이 연속 원본을 그대로 받는다.
       const capture = await startMicCapture((samples) => {
-        chunker.push(sampleRate === RECORDING_SAMPLE_RATE ? samples : resampleLinear(samples, sampleRate, RECORDING_SAMPLE_RATE));
+        chunker.push(samples);
+        handlersRef.current.onFrame?.(samples);
       });
-      sampleRate = capture.sampleRate;
       captureRef.current = capture;
     } catch (error) {
       chunkerRef.current = null;

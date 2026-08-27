@@ -1,0 +1,259 @@
+/* ---------- 첫 방문 스플래시 ---------- */
+
+.splash {
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 28px;
+  padding: 40px 24px;
+  background: var(--bg);
+  color: var(--fg);
+}
+
+.splashBrand {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.splashLogo {
+  width: 96px;
+  height: 96px;
+}
+
+.splashTitle {
+  font-size: 28px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.splashHeadline {
+  font-size: 14px;
+  color: var(--fg-2);
+}
+
+.splashProgress {
+  width: 440px;
+  max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.splashBar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.splashBarDone {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--success);
+}
+
+.splashFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.2s ease-out;
+}
+
+.splashFillFailed {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--danger);
+}
+
+.splashMeta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.splashOk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+  font-weight: 500;
+}
+
+.splashFailed {
+  color: var(--danger);
+  font-weight: 500;
+}
+
+.splashButton {
+  height: 38px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.splashNote {
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* 버튼이 아니라 조용한 링크 — 디자인의 "나중에" 와 같은 무게 */
+.splashLink {
+  position: absolute;
+  right: 24px;
+  bottom: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.splashLink:hover {
+  color: var(--fg);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 백그라운드 플로팅 카드 (우하단, 플레이어 바 위, 토스트 아래) ---------- */
+
+.card {
+  position: fixed;
+  right: 24px;
+  bottom: 84px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 320px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow-toast);
+  cursor: pointer;
+  animation: card-in 0.24s ease-out;
+}
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.cardIcon,
+.cardIconDone,
+.cardIconFailed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+
+.cardIcon {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.cardIconDone {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.cardIconFailed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.cardBody {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cardTitle {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.cardBar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.cardBarDone {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--success);
+}
+
+.cardFill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+  transition: width 0.2s ease-out;
+}
+
+.cardFillFailed {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--danger);
+}
+
+.cardFoot {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cardRetry {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}

@@ -65,6 +65,8 @@ export class LiveChunker {
     private readonly options: LiveChunkerOptions,
     private readonly onChunk: (chunk: LiveChunk) => void,
     private readonly onLevel?: (rms: number) => void,
+    /** 시간축에 들어간 프레임(복사본) — 실시간 엔진에 그대로 흘려보낸다. 저장 WAV 와 같은 샘플이라 타임스탬프가 맞는다 */
+    private readonly onFrame?: (frame: Float32Array) => void,
   ) {
     this.frameSamples = Math.round((options.sampleRate * options.frameMs) / 1000);
     this.frame = new Float32Array(this.frameSamples);
@@ -126,6 +128,7 @@ export class LiveChunker {
       for (const kept of this.preRoll) {
         this.buffer.set(floatToPcm16(kept), this.length);
         this.length += kept.length;
+        this.onFrame?.(kept);
       }
       this.preRoll = [];
     }
@@ -133,6 +136,7 @@ export class LiveChunker {
     if (voiced) this.voicedFrames += 1;
     this.buffer.set(floatToPcm16(frame), this.length);
     this.length += frame.length;
+    this.onFrame?.(frame.slice());
     if (partial) return;
     const { maxMs, targetMs, minMs, minSilenceFrames, pauseFrames } = this.options;
     const ms = this.lengthMs();

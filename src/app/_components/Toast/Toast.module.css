@@ -10,6 +10,11 @@
   pointer-events: none;
 }
 
+/* 플로팅 다운로드 카드가 떠 있으면 토스트 기둥을 그 위로 올린다 (카드 ≈ 82px + 간격 10px) */
+:global(html[data-model-card]) .stack {
+  bottom: 176px;
+}
+
 .toast {
   display: flex;
   flex-direction: column;

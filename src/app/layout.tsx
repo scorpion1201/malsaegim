@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { IBM_Plex_Sans_KR } from 'next/font/google';
 import { DialogProvider } from './_components/Dialog/DialogProvider';
+import { ModelProvider } from './_components/OnDevice/ModelProvider';
 import { ToastProvider } from './_components/Toast/ToastProvider';
 import { THEME_INIT_SCRIPT } from './_lib/theme';
 import './globals.css';
@@ -25,7 +26,9 @@ const RootLayout = ({ children }: LayoutProps<'/'>) => (
     </head>
     <body>
       <ToastProvider>
-        <DialogProvider>{children}</DialogProvider>
+        <DialogProvider>
+          <ModelProvider>{children}</ModelProvider>
+        </DialogProvider>
       </ToastProvider>
     </body>
   </html>

@@ -43,6 +43,7 @@ build
 target
 crates/**/target
 src/app/_lib/audio/pkg
+public/models
 *.tsbuildinfo
 next-env.d.ts
 

@@ -84,13 +84,9 @@
   word-break: keep-all;
 }
 
-.cardWarning {
-  font-weight: 600;
-  color: var(--danger);
-}
-
 .pillOk,
-.pillWarn {
+.pillWarn,
+.pillAccent {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -110,6 +106,11 @@
 .pillWarn {
   background: var(--danger-soft);
   color: var(--danger);
+}
+
+.pillAccent {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .pillDot {
@@ -267,4 +268,150 @@
   background: var(--surface-2);
   color: var(--muted);
   cursor: default;
+}
+
+/* ---------- On-Device 모델 행 ---------- */
+
+.modelRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.modelIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.modelText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.modelName {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.modelSub {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.modelStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.modelMeta {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.smallButton,
+.quietButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.smallButton {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.smallButton:hover {
+  background: var(--border);
+}
+
+.quietButton {
+  background: transparent;
+  color: var(--muted);
+}
+
+.quietButton:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.modelProgress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 220px;
+}
+
+.modelProgressHead {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.modelBar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.modelBarFill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 0.2s ease-out;
+}
+
+.modelOk,
+.modelFail {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.modelOk {
+  color: var(--success);
+}
+
+.modelFail {
+  color: var(--danger);
+}
+
+.modelFailDetail {
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
 }

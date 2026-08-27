@@ -3,6 +3,8 @@ import { readAuthConfig } from '@/app/_lib/auth/config';
 import { SESSION_COOKIE, verifySessionToken } from '@/app/_lib/auth/session';
 
 export const proxy = (request: NextRequest) => {
+  // 헬스체크는 로그인과 무관하게 항상 연다
+  if (request.nextUrl.pathname === '/healthz') return NextResponse.next();
   const auth = readAuthConfig();
   const isLogin = request.nextUrl.pathname === '/login';
 

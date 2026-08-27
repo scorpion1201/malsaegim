@@ -1,0 +1,20 @@
+[package]
+name = "malsaegim-engine"
+version = "0.1.0"
+edition = "2021"
+description = "말새김 On-Device 인식 엔진 (Rust 래퍼 + whisper.cpp / sherpa-onnx)"
+
+[lib]
+name = "malsaegim_engine"
+crate-type = ["staticlib"]
+path = "src/lib.rs"
+
+# 빌드 도구도 엔진 소스 안에 둔다: `cargo run -p malsaegim-engine --bin xtask -- <out>` 가 두 wasm 을 만든다
+[[bin]]
+name = "xtask"
+path = "src/bin/xtask.rs"
+
+# 스레드 모델이 달라 두 wasm 으로 나오지만 크레이트는 하나 — feature 로 고른다
+[features]
+whisper = []
+stream = []

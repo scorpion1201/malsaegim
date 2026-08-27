@@ -14,6 +14,7 @@ import {
 } from '@/app/_lib/settings/byokSettings';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
 import { useToast } from '../Toast/ToastProvider';
+import { OnDeviceModelCard } from './OnDeviceModelCard';
 import { GearIcon } from '../Workspace/GearIcon';
 import topStyles from '../Workspace/Workspace.module.css';
 import styles from './Settings.module.css';
@@ -82,7 +83,7 @@ export const SettingsPage = () => {
     toast.show(
       isByokComplete(next)
         ? { kind: 'success', title: '설정을 저장했습니다', description: '다음 인식부터 이 설정으로 요청합니다' }
-        : { kind: 'info', title: '설정을 저장했습니다', description: '세 항목을 모두 채우기 전까지는 음성 인식을 할 수 없습니다' },
+        : { kind: 'info', title: '설정을 저장했습니다', description: '세 항목을 모두 채우기 전까지는 온디바이스 인식을 사용합니다' },
     );
   };
 
@@ -131,6 +132,8 @@ export const SettingsPage = () => {
         <div className={styles.column}>
           <h1 className={styles.title}>설정</h1>
 
+          <OnDeviceModelCard />
+
           <section className={styles.card}>
             <div className={styles.cardHead}>
               <div className={styles.cardText}>
@@ -143,12 +146,12 @@ export const SettingsPage = () => {
                 <span className={styles.cardDescription}>
                   음성 인식을 사용하기 위한 API를 설정합니다. 설정된 키는 브라우저(On-Device)에만 저장됩니다.
                   <br />
-                  <strong className={styles.cardWarning}>비워두면 음성 인식을 할 수 없습니다.</strong>
+                  비워두면 온디바이스 인식을 사용합니다.
                 </span>
               </div>
-              <span className={keyed ? styles.pillOk : styles.pillWarn}>
+              <span className={keyed ? styles.pillOk : styles.pillAccent}>
                 <span className={styles.pillDot} />
-                {keyed ? '내 키 사용 중' : '설정 필요'}
+                {keyed ? '내 키 사용 중' : '온디바이스 사용 중'}
               </span>
             </div>
 

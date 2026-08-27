@@ -18,6 +18,9 @@ yarn.lock
 next-env.d.ts
 *.tsbuildinfo
 
+# on-device models (built by `yarn models`, served from public/models)
+/public/models/
+
 # env
 .env*
 !.env.example
