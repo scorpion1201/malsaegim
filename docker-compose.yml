@@ -5,6 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
     image: malsaegim:latest
     container_name: malsaegim
     restart: unless-stopped
@@ -16,6 +18,7 @@ services:
       # Access control (optional: leave APP_SHARED_PASSWORD empty to disable the login page)
       APP_SHARED_PASSWORD: ${APP_SHARED_PASSWORD:-}
       AUTH_COOKIE_SECRET: ${AUTH_COOKIE_SECRET:-}
+      ASR_PROXY_ALLOWED_HOSTS: ${ASR_PROXY_ALLOWED_HOSTS:-}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/healthz"]
       interval: 30s

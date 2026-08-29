@@ -78,6 +78,8 @@ COPY public ./public
 # 모델·wasm 은 이미지 안에서 만든 것만 쓴다 (.dockerignore 가 로컬 public/models 를 뺀다)
 COPY --from=manifest /out ./public/models
 COPY --from=wasm /build/pkg ./src/app/_lib/audio/pkg
+# 공유 링크(Open Graph)에 쓰는 주소 — 메타데이터는 빌드 때 고정된다
+ARG NEXT_PUBLIC_SITE_URL
 # package.json's `build` rebuilds the wasm (no cargo here), so run next build directly
 RUN yarn next build
 

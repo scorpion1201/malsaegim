@@ -13,10 +13,29 @@ const plexKr = IBM_Plex_Sans_KR({
   variable: '--font-plex-kr',
 });
 
+const SITE_NAME = '말새김';
+const SITE_DESCRIPTION = '실시간·녹음을 전사를 합니다.';
+
 export const metadata: Metadata = {
-  title: '말새김',
-  description: '녹음 파일을 받아쓰고 HWP/HWPX로 저장',
+  metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL || 'http://localhost:3000'),
+  title: SITE_NAME,
+  description: SITE_DESCRIPTION,
   icons: { icon: '/app-logo.png', apple: '/app-logo.png' },
+  openGraph: {
+    type: 'website',
+    siteName: SITE_NAME,
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+    locale: 'ko_KR',
+    url: '/',
+    images: [{ url: '/open-graph.png' }],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: SITE_NAME,
+    description: SITE_DESCRIPTION,
+    images: ['/open-graph.png'],
+  },
 };
 
 const RootLayout = ({ children }: LayoutProps<'/'>) => (
