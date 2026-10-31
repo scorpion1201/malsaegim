@@ -13,6 +13,8 @@ export type LiveRecognizerHandlers = {
 export type LiveRecognizer = {
   /** 청커 시간축에 들어간 16 kHz 프레임 */
   push: (samples: Float32Array) => void;
+  /** 조각 경계를 알린다 — 서버가 턴을 나누지 않는 엔진(Realtime)만 쓴다 */
+  endTurn?: (range: { startMs: number; endMs: number }) => void;
   /** 마지막 세그먼트를 받고 워커를 내린다 */
   finish: () => Promise<void>;
   terminate: () => void;

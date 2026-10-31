@@ -109,8 +109,9 @@ export const useLiveRecording = (handlers: LiveRecordingHandlers) => {
       // startMicCapture 가 네이티브→16kHz 연속 리샘플까지 해서 항상 16kHz 를 준다.
       // 저장·BYOK 청크는 청커가 문장 단위로 자르고, sherpa 실시간은 게이트 없이 연속 원본을 그대로 받는다.
       const capture = await startMicCapture((samples) => {
-        chunker.push(samples);
+        // 프레임을 먼저 흘려 보낸다 — 청커가 이 프레임에서 조각을 자르면 그 경계가 프레임 뒤에 오도록
         handlersRef.current.onFrame?.(samples);
+        chunker.push(samples);
       });
       captureRef.current = capture;
     } catch (error) {

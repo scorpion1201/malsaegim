@@ -32,7 +32,9 @@ import {
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import { normalizePageLayout, type PageLayout } from '@/app/_lib/hwp/pageLayout';
 import { formatMb } from '@/app/_lib/engine/malsaegimEngine';
-import { startLiveRecognizer, type LiveRecognizer } from '@/app/_lib/engine/malsaegimEngine';
+import { startLiveRecognizer, type LiveRecognizer, type LiveRecognizerHandlers } from '@/app/_lib/engine/malsaegimEngine';
+import { ASR_LANGUAGE, isRealtimeTarget } from '@/app/_lib/asr/directTranscribe';
+import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
@@ -136,8 +138,8 @@ export const TranscribeWorkspace = () => {
   const [livePartial, setLivePartial] = useState('');
   const [liveLagMs, setLiveLagMs] = useState(0);
   const [liveRestarting, setLiveRestarting] = useState(false);
-  /** 이번 녹음이 On-Device(sherpa) 경로인지 — 렌더에서 ref 를 읽지 않으려고 상태로 둔다 */
-  const [onDeviceLive, setOnDeviceLive] = useState(false);
+  /** 이번 녹음이 스트리밍(sherpa·Realtime) 경로인지 — 렌더에서 ref 를 읽지 않으려고 상태로 둔다 */
+  const [streamingLive, setStreamingLive] = useState(false);
   const liveRecognizerRef = useRef<LiveRecognizer | null>(null);
   /** On-Device 녹음의 확정 세그먼트 번호 — 조각 번호와 무관하게 0부터 */
   const liveIndexRef = useRef(0);
@@ -329,7 +331,7 @@ export const TranscribeWorkspace = () => {
     splitRef.current = null;
     queueRef.current = null;
     liveRecognizerRef.current = null;
-    setOnDeviceLive(false);
+    setStreamingLive(false);
   }, []);
 
   useEffect(() => {
@@ -831,12 +833,16 @@ export const TranscribeWorkspace = () => {
   );
 
   const live = useLiveRecording({
-    // On-Device 녹음은 조각 단위 큐를 쓰지 않는다 — 세그먼트가 outcomes 에 바로 들어간다
+    // 스트리밍 녹음은 조각 단위 큐를 쓰지 않는다 — 세그먼트가 outcomes 에 바로 들어간다
     onChunk: (chunk) => {
-      if (!liveRecognizerRef.current) queueRef.current?.enqueue(chunk);
+      const recognizer = liveRecognizerRef.current;
+      if (recognizer) recognizer.endTurn?.(chunk);
+      else queueRef.current?.enqueue(chunk);
     },
     onSkipped: (meta: ChunkMeta) => {
-      if (!liveRecognizerRef.current) setOutcomes((previous) => new Map(previous).set(meta.index, { kind: 'ok', meta, text: '' }));
+      const recognizer = liveRecognizerRef.current;
+      if (recognizer) recognizer.endTurn?.(meta);
+      else setOutcomes((previous) => new Map(previous).set(meta.index, { kind: 'ok', meta, text: '' }));
     },
     onFrame: (frame) => {
       const recognizer = liveRecognizerRef.current;
@@ -890,28 +896,37 @@ export const TranscribeWorkspace = () => {
       setLiveLagMs(0);
       liveIndexRef.current = 0;
       liveSentMsRef.current = 0;
-      setOnDeviceLive(engine.kind === 'ondevice');
-      if (engine.kind === 'ondevice') {
-        const manifest = modelRef.current.manifest;
-        if (!manifest) return;
+      const handlers: LiveRecognizerHandlers = {
+        onPartial: (text, processedMs) => {
+          setLivePartial(text);
+          setLiveLagMs(liveSentMsRef.current - processedMs);
+        },
+        onFinal: (segment) => {
+          const index = liveIndexRef.current;
+          liveIndexRef.current += 1;
+          const meta: ChunkMeta = { index, startMs: segment.startMs, endMs: segment.endMs };
+          setOutcomes((previous) => new Map(previous).set(index, { kind: 'ok', meta, text: segment.text }));
+        },
+        onRestart: () => setLiveRestarting(true),
+        onError: (error) =>
+          toast.show({ kind: 'error', title: '실시간 인식이 멈췄습니다', description: `${error.message} · 녹음은 계속 저장됩니다` }),
+      };
+      // 스트리밍 엔진: On-Device 는 sherpa, BYOK 는 Realtime 전용 모델. 그 밖의 BYOK 는 조각 단위 큐로 보낸다
+      const settings = readByokSettings();
+      const manifest = modelRef.current.manifest;
+      if (engine.kind === 'ondevice' && !manifest) return;
+      const startStreaming =
+        engine.kind === 'ondevice' && manifest
+          ? () => startLiveRecognizer(manifest, handlers)
+          : engine.kind === 'byok' && isRealtimeTarget(settings)
+            ? () => startRealtimeRecognizer({ ...settings, language: ASR_LANGUAGE }, handlers)
+            : null;
+      setStreamingLive(startStreaming !== null);
+      if (startStreaming) {
         try {
-          liveRecognizerRef.current = await startLiveRecognizer(manifest, {
-            onPartial: (text, processedMs) => {
-              setLivePartial(text);
-              setLiveLagMs(liveSentMsRef.current - processedMs);
-            },
-            onFinal: (segment) => {
-              const index = liveIndexRef.current;
-              liveIndexRef.current += 1;
-              const meta: ChunkMeta = { index, startMs: segment.startMs, endMs: segment.endMs };
-              setOutcomes((previous) => new Map(previous).set(index, { kind: 'ok', meta, text: segment.text }));
-            },
-            onRestart: () => setLiveRestarting(true),
-            onError: (error) =>
-              toast.show({ kind: 'error', title: '실시간 인식이 멈췄습니다', description: `${error.message} · 녹음은 계속 저장됩니다` }),
-          });
+          liveRecognizerRef.current = await startStreaming();
         } catch (error) {
-          setOnDeviceLive(false);
+          setStreamingLive(false);
           const message = error instanceof Error ? error.message : String(error);
           toast.show({
             kind: 'error',
@@ -947,10 +962,9 @@ export const TranscribeWorkspace = () => {
       setEditorValue(EMPTY_DOC);
       setDoc(EMPTY_DOC);
       setCurrentMs(0);
-      queueRef.current =
-        engine.kind === 'ondevice'
-          ? null
-          : makeQueue(engine, (outcome) => setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)));
+      queueRef.current = liveRecognizerRef.current
+        ? null
+        : makeQueue(engine, (outcome) => setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)));
       setPhase('recording');
       live.start(id).catch((error: unknown) => {
         stop();
@@ -984,7 +998,7 @@ export const TranscribeWorkspace = () => {
           // 마지막 세그먼트(finish 중 final)가 들어온 뒤에 기대 개수를 정한다
           await recognizer.finish();
           liveRecognizerRef.current = null;
-          setOnDeviceLive(false);
+          setStreamingLive(false);
           setLivePartial('');
           setExpectedCount(liveIndexRef.current);
         } else {
@@ -1131,13 +1145,13 @@ export const TranscribeWorkspace = () => {
   const liveRow = recording
     ? {
         startMs: live.emittedMs,
-        partial: onDeviceLive && live.status !== 'paused' ? livePartial : undefined,
+        partial: streamingLive && live.status !== 'paused' ? livePartial : undefined,
         label:
           live.status === 'paused'
             ? '일시정지'
             : liveRestarting
               ? '인식 엔진 재시작'
-              : onDeviceLive
+              : streamingLive
                 ? liveLagMs > 3000
                   ? '처리 지연'
                   : '듣는 중'

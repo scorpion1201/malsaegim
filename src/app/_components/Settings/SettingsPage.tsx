@@ -203,13 +203,13 @@ export const SettingsPage = () => {
                   className={`${styles.input} ${styles.mono}`}
                   type="text"
                   value={draft.model}
-                  placeholder="gpt-4o-transcribe"
+                  placeholder="gpt-realtime-whisper"
                   autoComplete="off"
                   spellCheck={false}
                   onChange={(event) => update({ model: event.target.value })}
                 />
               </span>
-              <span className={styles.hint}>음성 인식 모델 이름. 예: gpt-4o-transcribe</span>
+              <span className={styles.hint}>음성 인식 모델 이름. 예: gpt-realtime-whisper</span>
             </label>
 
             <div className={styles.testRow}>
