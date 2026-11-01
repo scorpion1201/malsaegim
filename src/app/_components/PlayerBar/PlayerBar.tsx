@@ -5,13 +5,19 @@ import { formatTimestamp } from '@/app/_lib/time';
 import styles from './PlayerBar.module.css';
 
 export type PlayerBarHandle = {
+  /** 노트 전체 시간축의 ms 로 이동하고 재생한다 */
   seekTo: (ms: number) => void;
 };
 
+/** 재생할 오디오 한 파트 — 노트 시간축에서 offsetMs 부터 durationMs 동안 */
+export type PlayerTrack = { blob: Blob; offsetMs: number; durationMs: number };
+
+/** 파트 목록이 바뀌면 부모가 key 를 바꿔 새로 마운트한다 (처음 파트·0초부터) */
 type PlayerBarProps = {
-  /** 재생 소스 — 불러온 파일(File) 또는 IndexedDB 의 녹음 WAV(Blob) */
-  source: Blob | null;
+  /** 재생 소스 — 불러온 파일(File) 또는 IndexedDB 의 녹음 WAV(Blob). 이어 붙인 노트는 파트 여러 개를 하나처럼 이어 재생한다 */
+  tracks: PlayerTrack[];
   durationMs: number | null;
+  /** 노트 전체 시간축의 현재 위치 */
   onTimeUpdate: (ms: number) => void;
 };
 
@@ -29,37 +35,69 @@ const shouldIgnoreKey = (target: EventTarget | null): boolean => {
   );
 };
 
-export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ source, durationMs, onTimeUpdate }, ref) => {
+/** 노트 시간축의 ms 가 들어 있는 파트 */
+const trackAt = (tracks: PlayerTrack[], ms: number): number => {
+  for (let index = tracks.length - 1; index >= 0; index -= 1) if (ms >= tracks[index].offsetMs) return index;
+  return 0;
+};
+
+export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ tracks, durationMs, onTimeUpdate }, ref) => {
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [index, setIndex] = useState(0);
   const [url, setUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [currentMs, setCurrentMs] = useState(0);
   const [mediaDurationMs, setMediaDurationMs] = useState<number | null>(null);
+  /** 파트를 바꾼 뒤 메타데이터가 오면 옮겨 갈 위치(파트 안 ms)와 재생 여부 */
+  const pendingRef = useRef<{ localMs: number; play: boolean } | null>(null);
+  const indexRef = useRef(0);
+  const tracksRef = useRef(tracks);
+  const onTimeUpdateRef = useRef(onTimeUpdate);
+  useEffect(() => {
+    tracksRef.current = tracks;
+    onTimeUpdateRef.current = onTimeUpdate;
+  });
 
   // object URL 은 effect 안에서 만들고 같은 effect 의 cleanup 에서 해제한다 (StrictMode 안전)
+  const blob = tracks[index]?.blob ?? null;
   useEffect(() => {
-    if (!source) {
+    if (!blob) {
       setUrl(null);
-      setPlaying(false);
-      setCurrentMs(0);
-      setMediaDurationMs(null);
       return;
     }
-    const objectUrl = URL.createObjectURL(source);
+    const objectUrl = URL.createObjectURL(blob);
     setUrl(objectUrl);
-    setPlaying(false);
-    setCurrentMs(0);
     return () => URL.revokeObjectURL(objectUrl);
-  }, [source]);
+  }, [blob]);
 
-  useImperativeHandle(ref, () => ({
-    seekTo: (ms) => {
-      const audio = audioRef.current;
-      if (!audio) return;
-      audio.currentTime = ms / 1000;
-      void audio.play().catch(() => {});
-    },
-  }));
+  const single = tracks.length <= 1;
+  const totalMs = single
+    ? (mediaDurationMs ?? durationMs ?? 0)
+    : (() => {
+        const last = tracks[tracks.length - 1];
+        return last.offsetMs + last.durationMs;
+      })();
+
+  /** 노트 시간축 ms 로 이동한다. 다른 파트면 그 파트를 띄운 뒤 메타데이터가 오면 옮긴다 */
+  const seek = (ms: number, play: boolean) => {
+    const list = tracksRef.current;
+    if (list.length === 0) return;
+    const clamped = Math.max(0, Math.min(ms, totalMs || ms));
+    const target = trackAt(list, clamped);
+    const localMs = clamped - list[target].offsetMs;
+    setCurrentMs(clamped);
+    const audio = audioRef.current;
+    if (target === indexRef.current && audio) {
+      audio.currentTime = localMs / 1000;
+      if (play) void audio.play().catch(() => {});
+      return;
+    }
+    pendingRef.current = { localMs, play: play || (audio ? !audio.paused : false) };
+    indexRef.current = target;
+    setIndex(target);
+  };
+
+  useImperativeHandle(ref, () => ({ seekTo: (ms) => seek(ms, true) }));
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -74,15 +112,15 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ source, 
       }
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault();
-        const delta = event.key === 'ArrowLeft' ? -5 : 5;
-        audio.currentTime = Math.max(0, Math.min(audio.duration || 0, audio.currentTime + delta));
+        const offset = tracksRef.current[indexRef.current]?.offsetMs ?? 0;
+        const now = offset + audio.currentTime * 1000;
+        seek(now + (event.key === 'ArrowLeft' ? -5000 : 5000), !audio.paused);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [url]);
+  });
 
-  const totalMs = mediaDurationMs ?? durationMs ?? 0;
   const ratio = totalMs > 0 ? Math.min(1, currentMs / totalMs) : 0;
 
   const toggle = () => {
@@ -101,15 +139,32 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ source, 
           preload="metadata"
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
-          onEnded={() => setPlaying(false)}
+          onEnded={() => {
+            // 다음 파트가 있으면 이어서 재생한다
+            const next = indexRef.current + 1;
+            if (next < tracksRef.current.length) {
+              pendingRef.current = { localMs: 0, play: true };
+              indexRef.current = next;
+              setIndex(next);
+              return;
+            }
+            setPlaying(false);
+          }}
           onLoadedMetadata={(event) => {
-            const seconds = event.currentTarget.duration;
+            const audio = event.currentTarget;
+            const seconds = audio.duration;
             setMediaDurationMs(Number.isFinite(seconds) ? seconds * 1000 : null);
+            const pending = pendingRef.current;
+            pendingRef.current = null;
+            if (!pending) return;
+            audio.currentTime = pending.localMs / 1000;
+            if (pending.play) void audio.play().catch(() => {});
           }}
           onTimeUpdate={(event) => {
-            const ms = event.currentTarget.currentTime * 1000;
+            const offset = tracksRef.current[indexRef.current]?.offsetMs ?? 0;
+            const ms = offset + event.currentTarget.currentTime * 1000;
             setCurrentMs(ms);
-            onTimeUpdate(ms);
+            onTimeUpdateRef.current(ms);
           }}
         />
       ) : null}
@@ -134,6 +189,7 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ source, 
       </button>
       <span className={styles.time}>
         {formatTimestamp(currentMs)} / {formatTimestamp(totalMs)}
+        {single ? null : ` · Part ${index + 1}/${tracks.length}`}
       </span>
       <div className={styles.track}>
         <div className={styles.fill} style={{ width: `${ratio * 100}%` }} />
@@ -146,12 +202,7 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ source, 
           value={Math.floor(currentMs)}
           disabled={!url}
           aria-label="재생 위치"
-          onChange={(event) => {
-            const audio = audioRef.current;
-            const ms = Number(event.target.value);
-            setCurrentMs(ms);
-            if (audio) audio.currentTime = ms / 1000;
-          }}
+          onChange={(event) => seek(Number(event.target.value), false)}
         />
       </div>
       <span className={styles.hint}>{url ? 'Space 재생·정지 · ←/→ 5초 이동' : '오디오를 불러오거나 녹음하면 여기서 재생할 수 있습니다'}</span>

@@ -10,7 +10,9 @@ export const SEEK_EVENT = 'asr:seek';
 export type SeekEventDetail = { ms: number };
 
 const TimestampView = ({ node }: ReactNodeViewProps) => {
+  // ms 는 노트 전체 시간축(재생 이동), 이어 붙인 파트는 offset 을 빼 파트 안 시각으로 보인다
   const ms = Number(node.attrs.ms ?? 0);
+  const offset = Number(node.attrs.offset ?? 0);
   return (
     <NodeViewWrapper as="span" className={styles.timestampWrapper}>
       <button
@@ -25,7 +27,7 @@ const TimestampView = ({ node }: ReactNodeViewProps) => {
           );
         }}
       >
-        {formatTimestamp(ms)}
+        {formatTimestamp(ms - offset)}
       </button>
     </NodeViewWrapper>
   );
@@ -45,6 +47,11 @@ export const TimestampNode = Node.create({
         parseHTML: (element) => Number(element.getAttribute('data-ms') ?? 0),
         renderHTML: (attributes) => ({ 'data-ms': String(attributes.ms) }),
       },
+      offset: {
+        default: 0,
+        parseHTML: (element) => Number(element.getAttribute('data-offset') ?? 0),
+        renderHTML: (attributes) => (Number(attributes.offset) > 0 ? { 'data-offset': String(attributes.offset) } : {}),
+      },
     };
   },
 
@@ -56,7 +63,7 @@ export const TimestampNode = Node.create({
     return [
       'span',
       mergeAttributes({ 'data-timestamp': '' }, HTMLAttributes),
-      formatTimestamp(Number(HTMLAttributes['data-ms'] ?? 0)),
+      formatTimestamp(Number(HTMLAttributes['data-ms'] ?? 0) - Number(HTMLAttributes['data-offset'] ?? 0)),
     ];
   },
 

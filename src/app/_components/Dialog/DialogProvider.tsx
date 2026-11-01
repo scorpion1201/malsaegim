@@ -16,12 +16,18 @@ export type ConfirmOptions = {
   defaultAction?: 'confirm' | 'cancel';
 };
 
+/** 세 갈래 선택 — 취소 · 다른 선택(alternate) · 확인. 취소 옆에 alternate 버튼이 하나 더 생긴다 */
+export type ChooseOptions = Omit<ConfirmOptions, 'defaultAction'> & { alternateLabel: string };
+export type ChooseResult = 'confirm' | 'alternate' | 'cancel';
+
 type DialogApi = {
   /** 브라우저 window.confirm 대체 — 확인이면 true */
   confirm: (options: ConfirmOptions) => Promise<boolean>;
+  /** 확인·다른 선택·취소 중 하나 */
+  choose: (options: ChooseOptions) => Promise<ChooseResult>;
 };
 
-type Pending = { options: ConfirmOptions; resolve: (value: boolean) => void };
+type Pending = { options: ConfirmOptions & { alternateLabel?: string }; resolve: (value: ChooseResult) => void };
 
 const DialogContext = createContext<DialogApi | null>(null);
 
@@ -42,19 +48,21 @@ export const DialogProvider = ({ children }: { children: ReactNode }) => {
   const confirmRef = useRef<HTMLButtonElement>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
 
-  const confirm = useCallback(
-    (options: ConfirmOptions) =>
-      new Promise<boolean>((resolve) => {
+  const choose = useCallback(
+    (options: ConfirmOptions & { alternateLabel?: string }) =>
+      new Promise<ChooseResult>((resolve) => {
         // 이미 열린 다이얼로그가 있으면 그것은 취소로 닫고 새 것을 띄운다
         setPending((previous) => {
-          previous?.resolve(false);
+          previous?.resolve('cancel');
           return { options, resolve };
         });
       }),
     [],
   );
 
-  const settle = useCallback((value: boolean) => {
+  const confirm = useCallback((options: ConfirmOptions) => choose(options).then((result) => result === 'confirm'), [choose]);
+
+  const settle = useCallback((value: ChooseResult) => {
     setPending((previous) => {
       previous?.resolve(value);
       return null;
@@ -69,17 +77,17 @@ export const DialogProvider = ({ children }: { children: ReactNode }) => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
-        settle(false);
+        settle('cancel');
       } else if (event.key === 'Enter') {
         event.preventDefault();
-        settle(!cancelFirst);
+        settle(cancelFirst ? 'cancel' : 'confirm');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [pending, settle]);
 
-  const api = useMemo<DialogApi>(() => ({ confirm }), [confirm]);
+  const api = useMemo<DialogApi>(() => ({ confirm, choose }), [confirm, choose]);
   const options = pending?.options;
   const danger = options?.kind === 'danger';
 
@@ -87,7 +95,7 @@ export const DialogProvider = ({ children }: { children: ReactNode }) => {
     <DialogContext.Provider value={api}>
       {children}
       {options ? (
-        <div className={styles.overlay} onMouseDown={() => settle(false)}>
+        <div className={styles.overlay} onMouseDown={() => settle('cancel')}>
           <div
             role="dialog"
             aria-modal="true"
@@ -106,14 +114,19 @@ export const DialogProvider = ({ children }: { children: ReactNode }) => {
               </div>
             </div>
             <div className={styles.actions}>
-              <button ref={cancelRef} type="button" className={styles.cancel} onClick={() => settle(false)}>
+              <button ref={cancelRef} type="button" className={styles.cancel} onClick={() => settle('cancel')}>
                 {options.cancelLabel ?? '취소'}
               </button>
+              {options.alternateLabel ? (
+                <button type="button" className={styles.cancel} onClick={() => settle('alternate')}>
+                  {options.alternateLabel}
+                </button>
+              ) : null}
               <button
                 ref={confirmRef}
                 type="button"
                 className={danger ? styles.confirmDanger : styles.confirm}
-                onClick={() => settle(true)}
+                onClick={() => settle('confirm')}
               >
                 {options.confirmLabel ?? '확인'}
               </button>

@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { assembleTranscript, type ChunkMeta, type ChunkOutcome } from '@/app/_lib/asr/assembleTranscript';
+import { assembleTranscript, type ChunkMeta, type ChunkOutcome, type TranscriptBlock } from '@/app/_lib/asr/assembleTranscript';
 import type { EngineKind, TranscribeEngine } from '@/app/_lib/asr/asrEngine';
 import { selectEngine } from '@/app/_lib/asr/selectEngine';
 import { createTranscribeQueue, type TranscribeQueue } from '@/app/_lib/asr/transcribeQueue';
@@ -11,7 +11,7 @@ import { deleteRecording, deleteRecordingParts, getRecording, putRecording } fro
 import { extractAudioRanges, splitAudioBuffer, type SplitHandle } from '@/app/_lib/audio/splitAudioFile';
 import { DEFAULT_SPLIT_OPTIONS, ON_DEVICE_SPLIT_OPTIONS, type AudioChunk, type ExtractRange, type SplitOptions } from '@/app/_lib/audio/types';
 import { extractWavRanges } from '@/app/_lib/audio/wav';
-import { blocksToTiptapDoc, type BlockLanguages } from '@/app/_lib/editor/blocksToTiptapDoc';
+import { blocksToTiptapDoc, partHeadingNode, type BlockLanguages } from '@/app/_lib/editor/blocksToTiptapDoc';
 import { patchFailedParagraph, upgradeFailedPlaceholders } from '@/app/_lib/editor/patchTranscript';
 import {
   audioKindOf,
@@ -20,7 +20,11 @@ import {
   loadProject,
   migrateLegacyDraft,
   newProjectId,
+  noteDurationOf,
+  notePartsOf,
   parseProjectFile,
+  partIndexAt,
+  partStorageKey,
   saveProject,
   serializeProject,
   toMeta,
@@ -38,7 +42,7 @@ import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
 import { readTranslationSettings, resolveTranslationKey, writeTranslationSettings } from '@/app/_lib/settings/translationSettings';
 import { readWorkspaceState, tabOfMeta, writeWorkspaceState, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
-import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
+import type { TiptapDoc, TiptapNode } from '@/app/_lib/hwp/tiptapToDocModel';
 import { AUTO_SOURCE, pairLabel } from '@/app/_lib/translation/languages';
 import { speakerView, type SpeakerState } from '@/app/_lib/translation/speaker';
 import {
@@ -56,7 +60,7 @@ import { NewTranslationDialog, type TranslationChoice } from '../Translation/New
 import { TranslationBanner } from '../Translation/TranslationBanner';
 import { TranslationLiveView } from '../Translation/TranslationLiveView';
 import { TranslationNotice, supportsTranslation } from '../Translation/TranslationNotice';
-import { PlayerBar, type PlayerBarHandle } from '../PlayerBar/PlayerBar';
+import { PlayerBar, type PlayerBarHandle, type PlayerTrack } from '../PlayerBar/PlayerBar';
 import { RecordingBar } from '../RecordingBar/RecordingBar';
 import { useDialog } from '../Dialog/DialogProvider';
 import { useToast } from '../Toast/ToastProvider';
@@ -159,6 +163,81 @@ const blockLanguagesOf = (project: Project | null): BlockLanguages | undefined =
       }
     : undefined;
 
+/** 열린 노트에 이어 붙이는 인식 한 회차 — 새 파트의 시작 시각·조각 번호·원본 키와, 앞 내용 + 구분 제목까지의 문서 */
+type AppendTarget = {
+  base: Project;
+  baseDoc: TiptapDoc;
+  offsetMs: number;
+  indexBase: number;
+  partIndex: number;
+  key: string;
+};
+
+const isBlankParagraph = (node: TiptapNode | undefined): boolean =>
+  node?.type === 'paragraph' && (node.content ?? []).every((child) => child.type === 'text' && !(child.text ?? '').trim());
+
+/** 이어 붙이기 준비 — 노트 끝에 "Part N · 라벨" 제목을 달고, 처음 이어 붙이는 오디오 노트면 맨 위에 Part 1 제목도 단다 */
+const prepareAppend = (base: Project, label: string): AppendTarget => {
+  const parts = notePartsOf(base);
+  const partIndex = parts.length;
+  const content = [...(base.doc.content ?? [])];
+  while (content.length > 0 && isBlankParagraph(content[content.length - 1])) content.pop();
+  if (partIndex === 1 && content[0]?.type !== 'heading') content.unshift(partHeadingNode(1, stripExtension(parts[0].name)));
+  if (partIndex > 0 || content.length > 0) content.push(partHeadingNode(partIndex + 1, label));
+  return {
+    base,
+    baseDoc: { type: 'doc', content },
+    offsetMs: noteDurationOf(base),
+    indexBase: base.chunks.reduce((max, chunk) => Math.max(max, chunk.index + 1), 0),
+    partIndex,
+    key: partStorageKey(base.id, partIndex),
+  };
+};
+
+/** 앞 내용 + 이번 파트 인식 결과. 파트 안 시각에 시작 시각을 더해 노트 시간축으로 적는다 */
+const composeAppendDoc = (target: AppendTarget, blocks: TranscriptBlock[], languages?: BlockLanguages): TiptapDoc => {
+  const added = blocks.length > 0 ? (blocksToTiptapDoc(blocks, languages, target.offsetMs).content ?? []) : [];
+  const content = [...(target.baseDoc.content ?? []), ...added];
+  return { type: 'doc', content: content.length > 0 ? content : [{ type: 'paragraph' }] };
+};
+
+const shiftChunks = (target: AppendTarget, chunks: StoredChunk[]): StoredChunk[] =>
+  chunks.map((chunk) => ({
+    ...chunk,
+    index: chunk.index + target.indexBase,
+    startMs: chunk.startMs + target.offsetMs,
+    endMs: chunk.endMs + target.offsetMs,
+  }));
+
+/** 이어 붙인 결과 노트 — 파트가 하나뿐이면(빈 노트에 처음 붙임) 예전 노트와 같은 모양으로 둔다 */
+const appendedProject = (
+  target: AppendTarget,
+  audio: ProjectAudio,
+  chunks: StoredChunk[],
+  doc: TiptapDoc,
+  title: string,
+  now: number,
+): Project => {
+  const parts = [...notePartsOf(target.base), { ...audio, offsetMs: target.offsetMs }];
+  return {
+    ...target.base,
+    title,
+    updatedAt: now,
+    audio: target.base.audio ?? audio,
+    parts: parts.length > 1 ? parts : undefined,
+    splitOptions: target.base.splitOptions,
+    chunks: [...target.base.chunks, ...shiftChunks(target, chunks)],
+    doc,
+  };
+};
+
+type TracksState = { list: PlayerTrack[]; version: number };
+/** 플레이어 파트 목록을 바꾼다 — version 이 바뀌어 플레이어가 처음부터 다시 뜬다 */
+const nextTracks =
+  (list: PlayerTrack[]) =>
+  (previous: TracksState): TracksState => ({ list, version: previous.version + 1 });
+const singleTrack = (blob: Blob | null): PlayerTrack[] => (blob ? [{ blob, offsetMs: 0, durationMs: 0 }] : []);
+
 const noop = () => {};
 
 const EMPTY_DOC: TiptapDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
@@ -193,7 +272,8 @@ export const TranscribeWorkspace = () => {
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [mode, setMode] = useState<RunMode>('new');
-  const [source, setSource] = useState<Blob | null>(null);
+  /** 플레이어가 재생할 오디오 파트들 — 이어 붙인 노트는 여러 개를 하나처럼 이어 재생한다 */
+  const [tracksState, setTracksState] = useState<TracksState>({ list: [], version: 0 });
   const [title, setTitle] = useState('');
   const [outcomes, setOutcomes] = useState<Map<number, ChunkOutcome>>(new Map());
   const [expectedCount, setExpectedCount] = useState<number | null>(null);
@@ -238,6 +318,8 @@ export const TranscribeWorkspace = () => {
   const docRef = useRef<TiptapDoc | null>(null);
   const activeRef = useRef<Project | null>(null);
   const pendingAudioRef = useRef<ProjectAudio | null>(null);
+  /** 열린 노트에 이어 붙이는 중이면 그 대상 (새 노트면 null) */
+  const appendRef = useRef<AppendTarget | null>(null);
   const pendingRetryRef = useRef<number | null>(null);
   /** 새 파일 노트의 id — 원본 Blob 을 인식이 끝나기 전에 IndexedDB 에 넣어야 해서 미리 정한다 */
   const pendingIdRef = useRef<string | null>(null);
@@ -246,8 +328,10 @@ export const TranscribeWorkspace = () => {
   /** 이번 새 노트 인식에 쓴 분할 옵션 — 엔진에 따라 다르다 (노트에 참고용으로 저장) */
   const splitOptionsRef = useRef<SplitOptions>(DEFAULT_SPLIT_OPTIONS);
 
+  /** 이어 붙이는 중인 파트의 종류 — 문단 합치기를 첫 파트가 아니라 이번 파트 기준으로 정한다 */
+  const [appendKind, setAppendKind] = useState<'file' | 'recording' | null>(null);
   // 녹음 노트는 조각이 짧아(문장 쉼마다) 25초 안쪽의 연속 조각을 한 문단으로 합친다
-  const liveNote = audioKindOf(activeProject?.audio) === 'recording';
+  const liveNote = (appendKind ?? audioKindOf(activeProject?.audio)) === 'recording';
   const assembled = useMemo(
     () => assembleTranscript(outcomes, expectedCount, liveNote ? LIVE_PARAGRAPH_MS : null),
     [outcomes, expectedCount, liveNote],
@@ -276,13 +360,21 @@ export const TranscribeWorkspace = () => {
     [],
   );
 
-  /** IndexedDB 에 남아 있는 원본(녹음 WAV 또는 불러온 파일)을 플레이어·재인식 소스로 붙인다 */
+  /** IndexedDB 에 남아 있는 원본(녹음 WAV 또는 불러온 파일)을 플레이어·재인식 소스로 붙인다. 이어 붙인 파트는 모두 */
   const attachAudio = useCallback((project: Project) => {
-    setSource(null);
-    if (audioKindOf(project.audio) === 'text') return;
-    void getRecording(project.id)
-      .then((recording) => {
-        if (recording && activeRef.current?.id === project.id) setSource(recording.blob);
+    setTracksState(nextTracks([]));
+    const parts = notePartsOf(project);
+    if (parts.length === 0) return;
+    void Promise.all(
+      parts.map((part, index) =>
+        getRecording(partStorageKey(project.id, index)).then((recording): PlayerTrack | null =>
+          recording ? { blob: recording.blob, offsetMs: part.offsetMs, durationMs: part.durationMs } : null,
+        ),
+      ),
+    )
+      .then((loaded) => {
+        if (activeRef.current?.id !== project.id) return;
+        setTracksState(nextTracks(loaded.filter((track): track is PlayerTrack => track !== null)));
       })
       .catch(() => {});
   }, []);
@@ -290,7 +382,10 @@ export const TranscribeWorkspace = () => {
   // 조립 결과 → 에디터 + 진행 토스트 (새 인식 중에만)
   useEffect(() => {
     if (mode !== 'new' || (phase !== 'transcribing' && phase !== 'splitting' && phase !== 'recording')) return;
-    const doc = blocksToTiptapDoc(assembled.blocks, blockLanguagesOf(activeRef.current));
+    const append = appendRef.current;
+    const doc = append
+      ? composeAppendDoc(append, assembled.blocks, blockLanguagesOf(activeRef.current))
+      : blocksToTiptapDoc(assembled.blocks, blockLanguagesOf(activeRef.current));
     setEditorValue(doc);
     setDoc(doc);
     if (phase === 'transcribing' && engineKind === 'byok') {
@@ -317,25 +412,37 @@ export const TranscribeWorkspace = () => {
   // 새 인식이 전부 끝나면 노트로 저장하고 검수 단계로
   useEffect(() => {
     if (mode !== 'new' || phase !== 'transcribing' || !assembled.complete) return;
-    const doc = docRef.current ?? blocksToTiptapDoc(assembled.blocks, blockLanguagesOf(activeRef.current));
+    const append = appendRef.current;
+    const doc =
+      docRef.current ??
+      (append
+        ? composeAppendDoc(append, assembled.blocks, blockLanguagesOf(activeRef.current))
+        : blocksToTiptapDoc(assembled.blocks, blockLanguagesOf(activeRef.current)));
     const chunks = outcomesToChunks(outcomes);
     const now = Date.now();
     const audio = pendingAudioRef.current;
     const isRecording = audioKindOf(audio) === 'recording';
-    const project: Project = {
-      id: activeRef.current?.id ?? pendingIdRef.current ?? newProjectId(),
-      title,
-      createdAt: activeRef.current?.createdAt ?? now,
-      updatedAt: now,
-      audio,
-      splitOptions: isRecording ? null : splitOptionsRef.current,
-      chunks,
-      doc,
-      translation: activeRef.current?.translation,
-    };
+    const project: Project =
+      append && audio
+        ? appendedProject(append, audio, chunks, doc, title, now)
+        : {
+            id: activeRef.current?.id ?? pendingIdRef.current ?? newProjectId(),
+            title,
+            createdAt: activeRef.current?.createdAt ?? now,
+            updatedAt: now,
+            audio,
+            splitOptions: isRecording ? null : splitOptionsRef.current,
+            chunks,
+            doc,
+            translation: activeRef.current?.translation,
+          };
+    appendRef.current = null;
     setActive(project);
     persist(project);
     setPhase('review');
+    setAppendKind(null);
+    // 이어 붙인 노트는 모든 파트를 다시 붙여 하나처럼 이어 재생한다
+    if (append) attachAudio(project);
     if (project.translation) {
       toast.show({
         id: TRANSCRIBE_TOAST,
@@ -350,7 +457,9 @@ export const TranscribeWorkspace = () => {
     const failedHint = '실패한 조각 옆 새로고침을 누르면 그 구간만 다시 인식합니다.';
     toast.update(TRANSCRIBE_TOAST, {
       kind: failed > 0 ? 'error' : 'success',
-      title: isRecording
+      title: append
+        ? `Part ${append.partIndex + 1} 이어 붙임 · ${formatTimestamp(audio?.durationMs ?? 0)}${failed > 0 ? ` · 실패 ${failed}개` : ''}`
+        : isRecording
         ? `녹음 저장됨 · ${formatTimestamp(audio?.durationMs ?? 0)}${failed > 0 ? ` · 실패 ${failed}개` : ''}`
         : failed > 0
           ? `인식 완료 · 실패 ${failed}개`
@@ -360,7 +469,7 @@ export const TranscribeWorkspace = () => {
       meta: undefined,
       duration: failed > 0 ? 8000 : 4000,
     });
-  }, [mode, phase, assembled, outcomes, title, setActive, persist, toast]);
+  }, [mode, phase, assembled, outcomes, title, setActive, persist, toast, attachAudio]);
 
   // 최초 진입: 예전 단일 초안 마이그레이션 + 목록 로드 + 최근 노트 자동 열기
   useEffect(() => {
@@ -382,7 +491,7 @@ export const TranscribeWorkspace = () => {
         setTitle(recent.title);
         setEditorValue(doc);
         setDoc(doc);
-        setDurationMs(recent.audio?.durationMs ?? null);
+        setDurationMs(recent.audio ? noteDurationOf(recent) : null);
         setExpectedCount(recent.chunks.length > 0 ? recent.chunks.length : null);
         setSavedAt(recent.updatedAt);
         setPhase('review');
@@ -414,6 +523,8 @@ export const TranscribeWorkspace = () => {
   }, [phase, currentDoc, title, activeProject, persist]);
 
   const stop = useCallback(() => {
+    appendRef.current = null;
+    setAppendKind(null);
     splitRef.current?.cancel();
     queueRef.current?.abort();
     liveRecognizerRef.current?.terminate();
@@ -572,26 +683,38 @@ export const TranscribeWorkspace = () => {
   );
 
   /** 새 노트: 무음 분할 → 전 조각 인식 */
+  /** 파일 인식 시작. append 가 있으면 열린 노트 끝에 다음 파트로 이어 붙이고, 없으면 새 노트 */
   const beginNew = useCallback(
-    (selected: File, buffer: ArrayBuffer, sha256: string) => {
+    (selected: File, buffer: ArrayBuffer, sha256: string, append?: AppendTarget) => {
       void (async () => {
         const engine = await ensureEngine();
         if (!engine) return;
         stop();
         setMode('new');
-        setActive(null);
         pendingAudioRef.current = null;
         pendingRetryRef.current = null;
-        pendingIdRef.current = newProjectId();
-        const id = pendingIdRef.current;
-        setSource(selected);
-        setTitle(stripExtension(selected.name));
+        let id: string;
+        if (append) {
+          // 열린 노트·제목·재생 중인 앞 파트는 그대로 두고, 본문은 앞 내용 + 구분 제목에서 시작한다
+          appendRef.current = append;
+          setAppendKind('file');
+          pendingIdRef.current = null;
+          id = append.key;
+          setEditorValue(append.baseDoc);
+          setDoc(append.baseDoc);
+        } else {
+          setActive(null);
+          pendingIdRef.current = newProjectId();
+          id = pendingIdRef.current;
+          setTracksState(nextTracks(singleTrack(selected)));
+          setTitle(stripExtension(selected.name));
+          setSavedAt(null);
+          setEditorValue(null);
+          setDoc(null);
+        }
         setOutcomes(new Map());
         setExpectedCount(null);
         setDurationMs(null);
-        setSavedAt(null);
-        setEditorValue(null);
-        setDoc(null);
         setPhase('splitting');
         toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '오디오를 나누는 중…', progress: 0 });
 
@@ -720,6 +843,30 @@ export const TranscribeWorkspace = () => {
     [stop, makeQueue, setActive, persist, failWith, toast, ensureEngine],
   );
 
+  /**
+   * 한 파트의 실패 조각을 그 파트 원본으로 다시 인식한다. 범위는 파트 안 시각으로 바꿔 자르고,
+   * 나온 조각은 노트 시간축으로 되돌려 본문의 실패 문단을 찾는다
+   */
+  const retryPart = useCallback(
+    (project: Project, partIndex: number, failed: StoredChunk[], buffer: ArrayBuffer) => {
+      const parts = notePartsOf(project);
+      const part = parts[partIndex];
+      if (!part) return;
+      const offset = part.offsetMs;
+      const inPart = (chunk: StoredChunk) => partIndexAt(parts, chunk.startMs) === partIndex;
+      const local = (chunk: StoredChunk): StoredChunk => ({ ...chunk, startMs: chunk.startMs - offset, endMs: chunk.endMs - offset });
+      const isRecording = audioKindOf(part) === 'recording';
+      const bytes = new Uint8Array(buffer);
+      const extract: RangeExtractor = (ranges, onChunk) => {
+        const toNote = (chunk: AudioChunk) => onChunk({ ...chunk, startMs: chunk.startMs + offset, endMs: chunk.endMs + offset });
+        return isRecording ? extractWavRanges(bytes, ranges, toNote) : extractAudioRanges(buffer, ranges, toNote);
+      };
+      // 범위 계산(마지막 조각은 스트림 끝까지)은 이 파트의 조각만으로 한다
+      beginRetry(extract, failed.filter(inPart).map(local), { ...project, audio: part, chunks: project.chunks.filter(inPart).map(local) });
+    },
+    [beginRetry],
+  );
+
   /** 파일 선택: 같은 오디오면 재생 연결·부분 재인식, 다른 파일이면 새 노트 */
   const start = useCallback(
     (selected: File) => {
@@ -731,7 +878,7 @@ export const TranscribeWorkspace = () => {
         pendingRetryRef.current = null;
 
         if (active?.audio && audioKindOf(active.audio) === 'file' && active.audio.sha256 === sha256) {
-          setSource(selected);
+          setTracksState(nextTracks(singleTrack(selected)));
           setDurationMs(active.audio.durationMs);
           void putRecording({
             id: active.id,
@@ -742,8 +889,11 @@ export const TranscribeWorkspace = () => {
           }).catch(() => {});
           const allFailed = failedChunksOf(active);
           const failed = pending === null ? allFailed : allFailed.filter((chunk) => chunk.index === pending);
-          if (failed.length > 0) {
-            beginRetry((ranges, onChunk) => extractAudioRanges(buffer, ranges, onChunk), failed, active);
+          // 같은 파일은 첫 파트의 원본이다 — 그 파트의 실패 조각만 다시 인식한다
+          const parts = notePartsOf(active);
+          const failedInFirst = failed.filter((chunk) => partIndexAt(parts, chunk.startMs) === 0);
+          if (failedInFirst.length > 0) {
+            retryPart(active, 0, failedInFirst, buffer);
           } else {
             toast.show({
               kind: 'info',
@@ -763,7 +913,22 @@ export const TranscribeWorkspace = () => {
           return;
         }
 
-        if (active) {
+        if (active && !active.translation) {
+          // 열린 노트에 이어 붙일지, 새 노트로 할지 묻는다
+          const latest: Project = { ...active, title, doc: docRef.current ?? active.doc };
+          const partNumber = notePartsOf(latest).length + 1;
+          const choice = await dialog.choose({
+            title: '열린 노트에 이어서 붙일까요?',
+            description: `이 파일의 인식 결과를 ‘${latest.title.trim() || '제목 없음'}’ 끝에 Part ${partNumber} 로 이어 붙입니다. 새 노트로 시작하면 열린 노트는 그대로 남습니다.`,
+            confirmLabel: '이어서 붙이기',
+            alternateLabel: '새 노트로 시작',
+          });
+          if (choice === 'cancel') return;
+          if (choice === 'confirm') {
+            beginNew(selected, buffer, sha256, prepareAppend(latest, stripExtension(selected.name)));
+            return;
+          }
+        } else if (active) {
           const proceed = await dialog.confirm({
             title: '열려 있는 노트와 다른 파일입니다',
             description: '새 노트로 시작할까요? 지금 열린 노트는 그대로 남습니다.',
@@ -774,7 +939,7 @@ export const TranscribeWorkspace = () => {
         beginNew(selected, buffer, sha256);
       })().catch(failWith);
     },
-    [beginNew, beginRetry, failWith, toast, dialog],
+    [beginNew, retryPart, failWith, toast, dialog, title],
   );
 
   /** 에디터의 실패 조각 새로고침: 오디오가 연결돼 있으면 바로, 아니면 파일 선택부터 */
@@ -791,27 +956,29 @@ export const TranscribeWorkspace = () => {
         });
         return;
       }
-      const isRecording = audioKindOf(project.audio) === 'recording';
-      const retryWith = (buffer: ArrayBuffer) => {
-        if (isRecording) {
-          const bytes = new Uint8Array(buffer);
-          beginRetry((ranges, onChunk) => extractWavRanges(bytes, ranges, onChunk), [chunk], project);
-        } else {
-          beginRetry((ranges, onChunk) => extractAudioRanges(buffer, ranges, onChunk), [chunk], project);
-        }
-      };
-      void getRecording(project.id)
+      // 이어 붙인 노트는 조각이 든 파트의 원본으로 다시 인식한다
+      const parts = notePartsOf(project);
+      const partIndex = Math.max(0, partIndexAt(parts, chunk.startMs));
+      const part = parts[partIndex];
+      const isRecording = audioKindOf(part ?? null) === 'recording';
+      const retryWith = (buffer: ArrayBuffer) => retryPart(project, partIndex, [chunk], buffer);
+      const attached = tracksState.list.find((track) => track.offsetMs === (part?.offsetMs ?? 0))?.blob;
+      void getRecording(partStorageKey(project.id, partIndex))
         .then(async (stored) => {
           if (stored) {
             retryWith(await stored.blob.arrayBuffer());
             return;
           }
-          if (source) {
-            retryWith(await source.arrayBuffer());
+          if (attached) {
+            retryWith(await attached.arrayBuffer());
             return;
           }
-          if (isRecording) {
-            toast.show({ kind: 'error', title: '녹음 파일을 찾을 수 없습니다', description: '이 브라우저에 저장된 녹음이 지워진 것 같습니다.' });
+          if (isRecording || partIndex > 0) {
+            toast.show({
+              kind: 'error',
+              title: isRecording ? '녹음 파일을 찾을 수 없습니다' : '이 파트의 원본을 찾을 수 없습니다',
+              description: '이 브라우저에 저장된 원본이 지워진 것 같습니다.',
+            });
             return;
           }
           pendingRetryRef.current = chunk.index;
@@ -824,13 +991,13 @@ export const TranscribeWorkspace = () => {
         })
         .catch(failWith);
     },
-    [source, beginRetry, failWith, toast],
+    [tracksState.list, retryPart, failWith, toast],
   );
 
   const resetWorkspace = useCallback(() => {
     stop();
     setActive(null);
-    setSource(null);
+    setTracksState(nextTracks(singleTrack(null)));
     setTitle('');
     setOutcomes(new Map());
     setExpectedCount(null);
@@ -857,7 +1024,7 @@ export const TranscribeWorkspace = () => {
       setDoc(doc);
       setOutcomes(new Map());
       setExpectedCount(project.chunks.length > 0 ? project.chunks.length : null);
-      setDurationMs(project.audio?.durationMs ?? null);
+      setDurationMs(project.audio ? noteDurationOf(project) : null);
       setSavedAt(project.updatedAt);
       setCurrentMs(0);
       setPhase('review');
@@ -906,8 +1073,13 @@ export const TranscribeWorkspace = () => {
         });
         if (!proceed) return;
         deleteProject(window.localStorage, id);
-      void deleteRecording(id).catch(() => {});
-      void deleteRecordingParts(id).catch(() => {});
+        // 이어 붙인 파트의 원본까지 지운다
+        const partCount = Math.max(1, target ? notePartsOf(target).length : 1);
+        for (let index = 0; index < partCount; index += 1) {
+          const key = partStorageKey(id, index);
+          void deleteRecording(key).catch(() => {});
+          void deleteRecordingParts(key).catch(() => {});
+        }
         refreshProjects();
         if (activeRef.current?.id === id) resetWorkspace();
         toast.show({ kind: 'info', title: '노트를 삭제했습니다' });
@@ -1003,7 +1175,7 @@ export const TranscribeWorkspace = () => {
     persist(project);
     pendingAudioRef.current = null;
     pendingRetryRef.current = null;
-    setSource(null);
+    setTracksState(nextTracks(singleTrack(null)));
     setTitle(project.title);
     setOutcomes(new Map());
     setExpectedCount(null);
@@ -1225,7 +1397,7 @@ export const TranscribeWorkspace = () => {
         persist(project);
         pendingAudioRef.current = audio;
         pendingRetryRef.current = null;
-        setSource(null);
+        setTracksState(nextTracks(singleTrack(null)));
         setTitle(noteTitle);
         setExpectedCount(null);
         setDurationMs(null);
@@ -1295,6 +1467,21 @@ export const TranscribeWorkspace = () => {
   const startRecording = useCallback(() => {
     if (phase === 'splitting' || phase === 'transcribing' || phase === 'recording') return;
     void (async () => {
+      // 노트가 열려 있으면 그 노트에 이어서 녹음할지, 새 노트로 녹음할지 묻는다
+      const opened = activeRef.current;
+      let append: AppendTarget | null = null;
+      if (opened && !opened.translation) {
+        const latest: Project = { ...opened, title, doc: docRef.current ?? opened.doc };
+        const partNumber = notePartsOf(latest).length + 1;
+        const choice = await dialog.choose({
+          title: '열린 노트에 이어서 녹음할까요?',
+          description: `‘${latest.title.trim() || '제목 없음'}’ 끝에 Part ${partNumber} 로 이어서 받아씁니다. 새 노트로 녹음하면 열린 노트는 그대로 남습니다.`,
+          confirmLabel: '이어서 녹음',
+          alternateLabel: '새 노트로 녹음',
+        });
+        if (choice === 'cancel') return;
+        if (choice === 'confirm') append = prepareAppend(latest, `녹음 ${formatDateTime(Date.now())}`);
+      }
       const engine = await ensureEngine();
       if (!engine) return;
       stop();
@@ -1359,7 +1546,6 @@ export const TranscribeWorkspace = () => {
         }
       }
       const now = Date.now();
-      const id = newProjectId();
       const noteTitle = `녹음 ${formatDateTime(now)}`;
       const audio: ProjectAudio = {
         kind: 'recording',
@@ -1369,29 +1555,48 @@ export const TranscribeWorkspace = () => {
         durationMs: 0,
         mimeType: 'audio/wav',
       };
-      const project: Project = { id, title: noteTitle, createdAt: now, updatedAt: now, audio, splitOptions: null, chunks: [], doc: EMPTY_DOC };
       setMode('new');
-      setActive(project);
-      persist(project);
       pendingAudioRef.current = audio;
       pendingRetryRef.current = null;
-      setSource(null);
-      setTitle(noteTitle);
       setOutcomes(new Map());
       setExpectedCount(null);
       setDurationMs(null);
-      setEditorValue(EMPTY_DOC);
-      setDoc(EMPTY_DOC);
-      setCurrentMs(0);
+      // 원본 녹음은 파트 키로 저장한다 — 새 노트면 노트 id, 이어 붙이면 id#N
+      let storageKey: string;
+      if (append) {
+        appendRef.current = append;
+        setAppendKind('recording');
+        storageKey = append.key;
+        setEditorValue(append.baseDoc);
+        setDoc(append.baseDoc);
+      } else {
+        const id = newProjectId();
+        storageKey = id;
+        const project: Project = { id, title: noteTitle, createdAt: now, updatedAt: now, audio, splitOptions: null, chunks: [], doc: EMPTY_DOC };
+        setActive(project);
+        persist(project);
+        setTracksState(nextTracks(singleTrack(null)));
+        setTitle(noteTitle);
+        setEditorValue(EMPTY_DOC);
+        setDoc(EMPTY_DOC);
+        setCurrentMs(0);
+      }
       queueRef.current = liveRecognizerRef.current
         ? null
         : makeQueue(engine, (outcome) => setOutcomes((previous) => new Map(previous).set(outcome.meta.index, outcome)));
       setPhase('recording');
-      live.start(id).catch((error: unknown) => {
+      live.start(storageKey).catch((error: unknown) => {
         stop();
-        deleteProject(window.localStorage, id);
-        resetWorkspace();
-        refreshProjects();
+        if (append) {
+          // 이어 붙이기를 시작하지 못했다 — 열린 노트를 원래대로 둔다
+          setEditorValue(append.base.doc);
+          setDoc(append.base.doc);
+          setPhase('review');
+        } else {
+          deleteProject(window.localStorage, storageKey);
+          resetWorkspace();
+          refreshProjects();
+        }
         toast.show({
           kind: 'error',
           title: '마이크를 시작할 수 없습니다',
@@ -1399,7 +1604,7 @@ export const TranscribeWorkspace = () => {
         });
       });
     })();
-  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, ensureEngine, router]);
+  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, ensureEngine, router, dialog, title]);
 
   /** 녹음 중지: 마지막 조각까지 보내고, WAV 를 저장한 뒤 남은 인식이 끝나면 완료 효과가 노트를 확정한다 */
   const stopRecording = useCallback(() => {
@@ -1413,7 +1618,7 @@ export const TranscribeWorkspace = () => {
       .then(async (result) => {
         const audio = pendingAudioRef.current;
         pendingAudioRef.current = audio ? { ...audio, durationMs: result.durationMs, size: result.blob.size } : audio;
-        setSource(result.blob);
+        if (!appendRef.current) setTracksState(nextTracks(singleTrack(result.blob)));
         setDurationMs(result.durationMs);
         durationRef.current = result.durationMs;
         const recognizer = liveRecognizerRef.current;
@@ -1465,14 +1670,26 @@ export const TranscribeWorkspace = () => {
     const timer = setTimeout(() => {
       const active = activeRef.current;
       if (!active) return;
-      const updated: Project = {
-        ...active,
-        title,
-        doc: docRef.current ?? active.doc,
-        chunks: outcomesToChunks(outcomes),
-        audio: active.audio ? { ...active.audio, durationMs: live.emittedMs } : active.audio,
-        updatedAt: Date.now(),
-      };
+      const append = appendRef.current;
+      const pending = pendingAudioRef.current;
+      const updated: Project =
+        append && pending
+          ? appendedProject(
+              append,
+              { ...pending, durationMs: live.emittedMs },
+              outcomesToChunks(outcomes),
+              docRef.current ?? append.baseDoc,
+              title,
+              Date.now(),
+            )
+          : {
+              ...active,
+              title,
+              doc: docRef.current ?? active.doc,
+              chunks: outcomesToChunks(outcomes),
+              audio: active.audio ? { ...active.audio, durationMs: live.emittedMs } : active.audio,
+              updatedAt: Date.now(),
+            };
       activeRef.current = updated;
       setActiveProject(updated);
       persist(updated);
@@ -1483,28 +1700,42 @@ export const TranscribeWorkspace = () => {
   const downloadAudio = useCallback(
     (id: string) => {
       const project = loadProject(window.localStorage, id);
-      void getRecording(id)
-        .then((stored) => {
-          if (!stored) {
-            toast.show({
-              kind: 'error',
-              title: '오디오 파일을 찾을 수 없습니다',
-              description: '이 브라우저에 원본이 없습니다. 오디오를 다시 불러오면 저장됩니다.',
-            });
-            return;
-          }
-          const isRecording = audioKindOf(project?.audio) === 'recording';
+      const parts = project ? notePartsOf(project) : [];
+      const count = Math.max(1, parts.length);
+      void (async () => {
+        // 이어 붙인 노트는 파트마다 파일 하나씩 내려받는다
+        let saved = 0;
+        let bytes = 0;
+        for (let index = 0; index < count; index += 1) {
+          const stored = await getRecording(partStorageKey(id, index));
+          if (!stored) continue;
+          const part = parts[index];
+          const isRecording = audioKindOf(part ?? project?.audio) === 'recording';
+          const base = project?.title.trim() || (isRecording ? 'recording' : 'audio');
+          const suffix = count > 1 ? ` (Part ${index + 1})` : '';
           const filename = isRecording
-            ? `${project?.title.trim() || 'recording'}.wav`
-            : project?.audio?.name || `${project?.title.trim() || 'audio'}.mp3`;
+            ? `${base}${suffix}.wav`
+            : count > 1
+              ? `${base}${suffix} - ${part?.name ?? 'audio.mp3'}`
+              : part?.name || `${base}.mp3`;
           downloadBlob(stored.blob, filename);
+          saved += 1;
+          bytes += stored.blob.size;
+        }
+        if (saved === 0) {
           toast.show({
-            kind: 'success',
-            title: '오디오 파일 저장',
-            description: `${filename} · ${(stored.blob.size / (1024 * 1024)).toFixed(1)}MB`,
+            kind: 'error',
+            title: '오디오 파일을 찾을 수 없습니다',
+            description: '이 브라우저에 원본이 없습니다. 오디오를 다시 불러오면 저장됩니다.',
           });
-        })
-        .catch(failWith);
+          return;
+        }
+        toast.show({
+          kind: 'success',
+          title: saved > 1 ? `오디오 파일 ${saved}개 저장` : '오디오 파일 저장',
+          description: `${(bytes / (1024 * 1024)).toFixed(1)}MB${saved < count ? ` · ${count - saved}개 파트는 원본이 없습니다` : ''}`,
+        });
+      })().catch(failWith);
     },
     [failWith, toast],
   );
@@ -1757,7 +1988,13 @@ export const TranscribeWorkspace = () => {
               speaker={translation ? { view: speakerView(translation.speaker), onToggle: toggleSpeaker } : undefined}
             />
           ) : tab === 'translate' && !showEditor ? null : (
-            <PlayerBar ref={playerRef} source={source} durationMs={durationMs} onTimeUpdate={setCurrentMs} />
+            <PlayerBar
+              key={tracksState.version}
+              ref={playerRef}
+              tracks={tracksState.list}
+              durationMs={durationMs}
+              onTimeUpdate={setCurrentMs}
+            />
           )}
           {tab === 'transcribe' && !recording ? (
             <div className={styles.mobileBar}>

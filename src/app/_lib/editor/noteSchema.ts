@@ -27,8 +27,9 @@ const NODE_ATTRS: Record<string, Record<string, AttrCheck>> = {
   },
   listItem: {},
   hardBreak: {},
-  timestamp: { ms: isTime },
-  failedChunk: { startMs: isTime, endMs: isTime },
+  // offset: 이어 붙인 파트의 시작 시각 — 화면에는 ms - offset 으로 보인다
+  timestamp: { ms: isTime, offset: isTime },
+  failedChunk: { startMs: isTime, endMs: isTime, offset: isTime },
 };
 
 const MARK_TYPES = new Set(['bold', 'italic', 'underline']);
