@@ -149,7 +149,7 @@ export const TranslationLiveView = ({
             </div>
             {connecting ? (
               <div className={styles.liveRow}>
-                <span className={styles.chipLive}>00:00</span>
+                <span className={styles.chipLive}>{formatTimestamp(nextStartMs)}</span>
                 <span className={styles.connecting}>
                   <span className={styles.spinner} />
                   번역을 연결하는 중입니다

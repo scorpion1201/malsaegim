@@ -5,11 +5,13 @@ import type { ProjectMeta } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import type { WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
+import { pairLabel } from '@/app/_lib/translation/languages';
 import { Menu, type MenuItem } from '../Menu/Menu';
 import styles from './Workspace.module.css';
 
 export type SidebarHandle = {
   openAudioPicker: () => void;
+  focusNewTranslation: () => void;
 };
 
 type SidebarProps = {
@@ -30,12 +32,22 @@ type SidebarProps = {
   onExportDoc: (id: string, format: ExportFormat) => void;
   onDownloadAudio: (id: string) => void;
   onDelete: (id: string) => void;
+  onNewTranslation: () => void;
+  newTranslationOpen: boolean;
+  translating: boolean;
+  /** 진행 중 행의 상태 문구 (번역 중, 일시정지) */
+  liveLabel: string;
+  /** 연결 중에만 보이는 임시 행 — 실패하면 사라진다 */
+  pendingRow: { title: string; meta: string } | null;
+  /** 첫 스피커 세션의 이어폰 안내 */
+  speakerHint: boolean;
 };
 
 type Tone = 'ok' | 'failed' | 'none' | 'live';
 
 const statusOf = (project: ProjectMeta, live: boolean): { label: string; tone: Tone } => {
   if (live) return { label: '녹음 중', tone: 'live' };
+  if (project.targetLanguage && project.totalChunks === 0) return { label: '완료', tone: 'ok' };
   if (project.totalChunks === 0) return { label: '텍스트만', tone: 'none' };
   // 실패 개수는 재인식 로직에서만 쓰고 목록에는 드러내지 않는다 — 점 색으로만 구분
   if (project.failedCount > 0) return { label: '미완료', tone: 'failed' };
@@ -89,6 +101,21 @@ const MicIcon = () => (
   <svg width="18" height="18" viewBox="0 0 24 24" {...stroke} strokeWidth={2}>
     <rect x="9" y="3" width="6" height="11" rx="3" />
     <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
+  </svg>
+);
+
+const TranslateIcon = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" {...stroke}>
+    <path d="M4 5h9M8.5 3v2M11 5c-.8 3.6-3 6.6-7 8.5M5.5 8.5c1.2 2 3 3.7 5.5 5" />
+    <path d="M12 21l4.5-10L21 21M13.6 18h5.8" />
+  </svg>
+);
+
+const HeadphonesIcon = () => (
+  <svg width="13" height="13" viewBox="0 0 24 24" {...stroke}>
+    <path d="M4 15v-3a8 8 0 0 1 16 0v3" />
+    <rect x="3" y="14" width="4" height="7" rx="1.5" />
+    <rect x="17" y="14" width="4" height="7" rx="1.5" />
   </svg>
 );
 
@@ -151,11 +178,18 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
       onExportDoc,
       onDownloadAudio,
       onDelete,
+      onNewTranslation,
+      newTranslationOpen,
+      translating,
+      liveLabel,
+      pendingRow,
+      speakerHint,
     },
     ref,
   ) => {
     const audioInputRef = useRef<HTMLInputElement>(null);
     const importInputRef = useRef<HTMLInputElement>(null);
+    const newTranslationRef = useRef<HTMLButtonElement>(null);
     const [loadOpen, setLoadOpen] = useState(false);
     const [menuId, setMenuId] = useState<string | null>(null);
     const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -163,6 +197,7 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
 
     useImperativeHandle(ref, () => ({
       openAudioPicker: () => audioInputRef.current?.click(),
+      focusNewTranslation: () => newTranslationRef.current?.focus(),
     }));
 
     const closeLoad = useCallback(() => setLoadOpen(false), []);
@@ -227,74 +262,119 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
           }}
         />
 
-        <div className={styles.sidebarTop}>
-          <div className={styles.loadWrap}>
-            {/* 한 버튼처럼 보이는 스플릿 버튼 — 왼쪽은 빈 노트북, 오른쪽 ▾ 만 불러오기 메뉴 */}
-            <div className={styles.splitButton}>
-              <button
-                type="button"
-                className={styles.splitMain}
-                disabled={disabled}
-                data-tooltip="빈 노트북 만들기"
-                onClick={onNewNote}
-              >
-                <PlusIcon />
-                <span className={styles.loadLabel}>새 노트북</span>
-              </button>
-              <button
-                type="button"
-                className={styles.splitArrow}
-                disabled={disabled}
-                aria-label="불러오기 메뉴"
-                aria-haspopup="menu"
-                aria-expanded={loadOpen}
-                data-menu-toggle
-                onClick={() => setLoadOpen((open) => !open)}
-              >
-                <ChevronIcon />
-              </button>
-            </div>
-            <Menu open={loadOpen} items={loadItems} label="불러오기" className={styles.loadMenu} onClose={closeLoad} />
-          </div>
-          <button
-            type="button"
-            className={recording ? styles.recordButtonActive : styles.recordButton}
-            disabled={!recording && disabled}
-            aria-pressed={recording}
-            aria-label={recording ? '녹음 중지' : '녹음 시작'}
-            data-tooltip={recording ? '녹음 중 — 누르면 중지' : '녹음 시작'}
-            onClick={(event) => {
-              // 포커스를 남기면 Space(일시정지 단축키)가 이 버튼을 다시 눌러 녹음을 끝내 버린다
-              event.currentTarget.blur();
-              onToggleRecord();
-            }}
-          >
-            {recording ? (
-              <>
+        {tab === 'translate' ? (
+          <div className={styles.sidebarTop}>
+            <button
+              ref={newTranslationRef}
+              type="button"
+              className={translating ? styles.newTranslationLive : newTranslationOpen ? styles.newTranslationOpen : styles.newTranslation}
+              disabled={disabled && !translating}
+              data-tooltip={translating ? '번역 중. 누르면 중지' : undefined}
+              onClick={(event) => {
+                event.currentTarget.blur();
+                if (translating) onToggleRecord();
+                else onNewTranslation();
+              }}
+            >
+              {translating ? (
                 <span className={styles.pulse}>
-                  <MicIcon />
+                  <TranslateIcon />
                 </span>
-                <span>녹음 중</span>
-              </>
-            ) : (
-              <MicIcon />
-            )}
-          </button>
-        </div>
+              ) : (
+                <PlusIcon />
+              )}
+              <span>{translating ? '번역 중' : '새 번역'}</span>
+            </button>
+          </div>
+        ) : (
+          <div className={styles.sidebarTop}>
+            <div className={styles.loadWrap}>
+              {/* 한 버튼처럼 보이는 스플릿 버튼 — 왼쪽은 빈 노트북, 오른쪽 ▾ 만 불러오기 메뉴 */}
+              <div className={styles.splitButton}>
+                <button
+                  type="button"
+                  className={styles.splitMain}
+                  disabled={disabled}
+                  data-tooltip="빈 노트북 만들기"
+                  onClick={onNewNote}
+                >
+                  <PlusIcon />
+                  <span className={styles.loadLabel}>새 노트북</span>
+                </button>
+                <button
+                  type="button"
+                  className={styles.splitArrow}
+                  disabled={disabled}
+                  aria-label="불러오기 메뉴"
+                  aria-haspopup="menu"
+                  aria-expanded={loadOpen}
+                  data-menu-toggle
+                  onClick={() => setLoadOpen((open) => !open)}
+                >
+                  <ChevronIcon />
+                </button>
+              </div>
+              <Menu open={loadOpen} items={loadItems} label="불러오기" className={styles.loadMenu} onClose={closeLoad} />
+            </div>
+            <button
+              type="button"
+              className={recording ? styles.recordButtonActive : styles.recordButton}
+              disabled={!recording && disabled}
+              aria-pressed={recording}
+              aria-label={recording ? '녹음 중지' : '녹음 시작'}
+              data-tooltip={recording ? '녹음 중 — 누르면 중지' : '녹음 시작'}
+              onClick={(event) => {
+                // 포커스를 남기면 Space(일시정지 단축키)가 이 버튼을 다시 눌러 녹음을 끝내 버린다
+                event.currentTarget.blur();
+                onToggleRecord();
+              }}
+            >
+              {recording ? (
+                <>
+                  <span className={styles.pulse}>
+                    <MicIcon />
+                  </span>
+                  <span>녹음 중</span>
+                </>
+              ) : (
+                <MicIcon />
+              )}
+            </button>
+          </div>
+        )}
 
         <div className={styles.sectionLabel}>{tab === 'translate' ? '번역 노트' : '노트'}</div>
 
         <div className={styles.projectList}>
+          {pendingRow ? (
+            <div className={styles.projectRowActive}>
+              <div className={styles.projectOpen}>
+                <span className={styles.projectTitle}>{pendingRow.title}</span>
+                <span className={styles.projectMeta}>
+                  <span className={styles.dotFailed} />
+                  <span>{pendingRow.meta}</span>
+                </span>
+              </div>
+            </div>
+          ) : null}
           {projects.length === 0 ? (
+            pendingRow ? null : (
             <p className={styles.projectEmpty}>
               {tab === 'translate'
                 ? '저장된 번역 노트가 없습니다. 새 번역을 시작하면 번역 노트가 생깁니다.'
                 : '저장된 노트가 없습니다. 오디오를 불러오거나 녹음을 시작하면 새 노트가 생깁니다.'}
             </p>
+            )
           ) : (
             projects.map((project) => {
               const active = project.id === activeId;
-              const status = statusOf(project, recording && active);
+              const live = recording && active;
+              const status = statusOf(project, live);
+              const translationMeta = project.targetLanguage
+                ? `${pairLabel(project.sourceLanguage ?? 'auto', project.targetLanguage)} · ${
+                    live ? liveLabel : `${formatTimestamp(project.durationMs ?? 0)} · ${status.label}`
+                  }`
+                : null;
               const isRecording = (project.kind ?? 'file') === 'recording';
               const menuOpen = menuId === project.id;
               return (
@@ -323,9 +403,10 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
                       <span className={styles.projectMeta}>
                         <span className={dotClass(status.tone)} />
                         <span>
-                          {isRecording
+                          {translationMeta ??
+                            (isRecording
                             ? `녹음 · ${formatTimestamp(project.durationMs ?? 0)} · ${status.label}`
-                            : `${formatDateTime(project.updatedAt)} · ${status.label}`}
+                            : `${formatDateTime(project.updatedAt)} · ${status.label}`)}
                         </span>
                       </span>
                     </button>
@@ -348,6 +429,18 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
             })
           )}
         </div>
+
+        {speakerHint ? (
+          <div className={styles.speakerHint} role="status">
+            <span className={styles.speakerHintIcon}>
+              <HeadphonesIcon />
+            </span>
+            <div className={styles.speakerHintText}>
+              <span className={styles.speakerHintTitle}>이어폰을 권장합니다</span>
+              <span>스피커로 들으면 번역 음성이 마이크와 저장 녹음에 섞입니다.</span>
+            </div>
+          </div>
+        ) : null}
       </aside>
     );
   },

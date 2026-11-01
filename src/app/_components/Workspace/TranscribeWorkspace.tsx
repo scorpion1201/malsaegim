@@ -36,13 +36,26 @@ import { startLiveRecognizer, type LiveRecognizer, type LiveRecognizerHandlers }
 import { ASR_LANGUAGE, isRealtimeTarget } from '@/app/_lib/asr/directTranscribe';
 import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
+import { readTranslationSettings, resolveTranslationKey, writeTranslationSettings } from '@/app/_lib/settings/translationSettings';
 import { readWorkspaceState, tabOfMeta, writeWorkspaceState, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import { AUTO_SOURCE, pairLabel } from '@/app/_lib/translation/languages';
+import { speakerView, type SpeakerState } from '@/app/_lib/translation/speaker';
+import {
+  classifyStartError,
+  startTranslationRecognizer,
+  type TranslationHandlers,
+  type TranslationRecognizer,
+  type TranslationStatus,
+} from '@/app/_lib/translation/translationRecognizer';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { Editor } from '../Editor/Editor';
 import { LayoutPanel } from '../LayoutPanel/LayoutPanel';
 import { useModelDownload } from '../OnDevice/ModelProvider';
+import { NewTranslationDialog, type TranslationChoice } from '../Translation/NewTranslationDialog';
+import { TranslationBanner } from '../Translation/TranslationBanner';
+import { TranslationLiveView } from '../Translation/TranslationLiveView';
+import { TranslationNotice, supportsTranslation } from '../Translation/TranslationNotice';
 import { PlayerBar, type PlayerBarHandle } from '../PlayerBar/PlayerBar';
 import { RecordingBar } from '../RecordingBar/RecordingBar';
 import { useDialog } from '../Dialog/DialogProvider';
@@ -61,6 +74,22 @@ type RunMode = 'new' | 'retry';
 const TRANSCRIBE_TOAST = 'transcribe';
 const RETRY_TOAST = 'retry';
 const MODEL_TOAST = 'model';
+
+type TranslationSession = {
+  status: TranslationStatus;
+  delayed: boolean;
+  speaker: SpeakerState;
+  partial: { source: string; translation: string };
+  sourceLanguage: string;
+  targetLanguage: string;
+  /** 일시정지를 누른 시각 */
+  pausedAtMs: number | null;
+  /** 번역 없이 녹음 계속을 골랐다 */
+  bannerDismissed: boolean;
+};
+
+type NewTranslationState = { choice: TranslationChoice; focus: 'source' | 'start' };
+type NoticeKind = 'key' | 'unsupported';
 
 const stripExtension = (name: string) => name.replace(/\.[^.]+$/, '');
 
@@ -127,6 +156,8 @@ const blockLanguagesOf = (project: Project | null): BlockLanguages | undefined =
       }
     : undefined;
 
+const noop = () => {};
+
 const EMPTY_DOC: TiptapDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 /** 녹음 노트의 문단 길이 상한 — 이 안쪽의 연속 조각은 한 문단으로 합친다 */
 const LIVE_PARAGRAPH_MS = 25_000;
@@ -183,6 +214,17 @@ export const TranscribeWorkspace = () => {
   const [hydrated, setHydrated] = useState(false);
   /** 저장하고 이동을 고른 뒤 저장이 끝나면 옮겨 갈 탭 */
   const pendingTabRef = useRef<WorkspaceTab | null>(null);
+  const [translation, setTranslation] = useState<TranslationSession | null>(null);
+  const translationRef = useRef<TranslationRecognizer | null>(null);
+  /** 연결 중 취소용 */
+  const translationAbortRef = useRef<AbortController | null>(null);
+  const [newTranslation, setNewTranslation] = useState<NewTranslationState | null>(null);
+  const [notice, setNotice] = useState<NoticeKind | null>(null);
+  /** 번역 탭 빈 화면을 키 안내로 덮을지 */
+  const [emptyNotice, setEmptyNotice] = useState<NoticeKind | null>(null);
+  const [micLabel, setMicLabel] = useState('기본 마이크');
+  const [pendingRow, setPendingRow] = useState<{ title: string; meta: string } | null>(null);
+  const [speakerHint, setSpeakerHint] = useState(false);
 
   const playerRef = useRef<PlayerBarHandle>(null);
   const sidebarRef = useRef<SidebarHandle>(null);
@@ -289,6 +331,16 @@ export const TranscribeWorkspace = () => {
     setActive(project);
     persist(project);
     setPhase('review');
+    if (project.translation) {
+      toast.show({
+        id: TRANSCRIBE_TOAST,
+        kind: 'success',
+        title: `번역 저장됨 · ${formatTimestamp(audio?.durationMs ?? 0)}`,
+        description: '이 브라우저에 저장됨',
+        duration: 4000,
+      });
+      return;
+    }
     const failed = chunks.filter((chunk) => chunk.status === 'failed').length;
     const failedHint = '실패한 조각 옆 새로고침을 누르면 그 구간만 다시 인식합니다.';
     toast.update(TRANSCRIBE_TOAST, {
@@ -360,10 +412,23 @@ export const TranscribeWorkspace = () => {
     splitRef.current?.cancel();
     queueRef.current?.abort();
     liveRecognizerRef.current?.terminate();
+    translationAbortRef.current?.abort();
     splitRef.current = null;
     queueRef.current = null;
     liveRecognizerRef.current = null;
+    translationRef.current = null;
+    translationAbortRef.current = null;
     setStreamingLive(false);
+    setTranslation(null);
+    setPendingRow(null);
+    setSpeakerHint(false);
+  }, []);
+
+  // 새로고침, 탭 닫기: 과금 세션을 남기지 않는다. 녹음 조각과 자동 저장본은 기존 복구대로 남는다
+  useEffect(() => {
+    const onPageHide = () => translationRef.current?.terminate();
+    window.addEventListener('pagehide', onPageHide);
+    return () => window.removeEventListener('pagehide', onPageHide);
   }, []);
 
   useEffect(() => {
@@ -778,6 +843,7 @@ export const TranscribeWorkspace = () => {
       stop();
       pendingRetryRef.current = null;
       setTab(tabOfMeta(toMeta(project)));
+      setNotice(null);
       const doc = upgradeFailedPlaceholders(project.doc, failedChunksOf(project));
       setMode('new');
       setActive({ ...project, doc });
@@ -809,6 +875,7 @@ export const TranscribeWorkspace = () => {
   /** 그 탭의 마지막 노트 → 최신 노트 → 빈 화면 순으로 연다 */
   const moveToTab = useCallback(
     (next: WorkspaceTab) => {
+      setNotice(null);
       const metas = listProjects(window.localStorage).filter((meta) => tabOfMeta(meta) === next);
       const lastId = readWorkspaceState().lastNote[next];
       const target = metas.find((meta) => meta.id === lastId) ?? metas[0];
@@ -942,7 +1009,9 @@ export const TranscribeWorkspace = () => {
     setPhase('review');
   }, [phase, stop, setActive, persist, setDoc]);
 
-  const locked = phase === 'splitting' || phase === 'transcribing';
+  const connecting = translation !== null && phase !== 'recording' && translation.status === 'connecting';
+  const draining = translation?.status === 'draining';
+  const locked = phase === 'splitting' || phase === 'transcribing' || connecting || draining;
 
   const switchTab = useCallback(
     (next: WorkspaceTab) => {
@@ -950,9 +1019,9 @@ export const TranscribeWorkspace = () => {
       if (phase === 'recording') {
         void dialog
           .confirm({
-            title: '녹음을 저장하고 이동할까요?',
+            title: translationRef.current ? '번역을 저장하고 이동할까요?' : '녹음을 저장하고 이동할까요?',
             confirmLabel: '저장하고 이동',
-            cancelLabel: '계속 녹음',
+            cancelLabel: translationRef.current ? '계속 번역' : '계속 녹음',
             defaultAction: 'cancel',
           })
           .then((proceed) => {
@@ -967,6 +1036,235 @@ export const TranscribeWorkspace = () => {
     },
     [tab, locked, phase, dialog, flushAutosave, moveToTab],
   );
+
+  const translationNotice = useCallback((): NoticeKind | null => {
+    if (!supportsTranslation()) return 'unsupported';
+    return resolveTranslationKey(readByokSettings(), readTranslationSettings()) ? null : 'key';
+  }, []);
+
+  // 번역 탭 빈 화면: 시작할 수 없으면 언어를 고르게 하지 않고 안내를 보여 준다
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setEmptyNotice(tab === 'translate' && hydrated ? translationNotice() : null);
+  }, [tab, hydrated, translationNotice]);
+
+  const openNewTranslation = useCallback(() => {
+    if (phase === 'splitting' || phase === 'transcribing' || phase === 'recording') return;
+    const blocked = translationNotice();
+    if (blocked) {
+      setNotice(blocked);
+      return;
+    }
+    const { sourceLanguage, targetLanguage, speakerOn } = readTranslationSettings();
+    setNewTranslation({ choice: { sourceLanguage, targetLanguage, speakerOn }, focus: 'source' });
+    void navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => {
+        // 마이크 권한을 준 적이 없으면 라벨이 비어 있다
+        const label = devices.find((device) => device.kind === 'audioinput' && device.label)?.label;
+        if (label) setMicLabel(label);
+      })
+      .catch(() => {});
+  }, [phase, translationNotice]);
+
+  const closeNewTranslation = useCallback(() => {
+    setNewTranslation(null);
+    setTimeout(() => sidebarRef.current?.focusNewTranslation(), 0);
+  }, []);
+
+  /** 번역 시작 실패 — 노트를 만들지 않고 고른 값으로 레이어에 돌아간다 */
+  const failTranslationStart = useCallback(
+    async (error: unknown, choice: TranslationChoice) => {
+      const kind = classifyStartError(error);
+      const message = error instanceof Error ? error.message : String(error);
+      const reopen = () => setNewTranslation({ choice, focus: 'start' });
+      if (kind === 'aborted') return;
+      if (kind === 'session') {
+        toast.show({
+          kind: 'error',
+          title: '로그인이 만료되었습니다',
+          description: '편집 내용은 이 브라우저에 저장돼 있습니다.',
+          duration: 0,
+          actions: [{ label: '다시 로그인', primary: true, onClick: () => window.location.reload() }],
+        });
+        return;
+      }
+      if (kind === 'mic') {
+        reopen();
+        toast.show({ kind: 'error', title: '마이크를 시작할 수 없습니다', description: message });
+        return;
+      }
+      if (kind === 'key' || kind === 'access' || kind === 'request' || kind === 'quota') {
+        const openSettings = await dialog.confirm({
+          title: kind === 'key' ? 'API 키를 확인하세요' : kind === 'request' ? '번역 설정을 확인하세요' : '번역을 시작할 수 없습니다',
+          description: message,
+          confirmLabel: '설정 열기',
+          cancelLabel: '닫기',
+        });
+        if (openSettings) router.push('/settings#translation');
+        else reopen();
+        return;
+      }
+      reopen();
+      toast.show({ kind: 'error', title: '번역을 연결하지 못했습니다', description: message });
+    },
+    [toast, dialog, router],
+  );
+
+  /** 번역 시작: 전사 엔진을 타지 않는다. 연결된 뒤에만 노트를 만든다 */
+  const startTranslation = useCallback(
+    (choice: TranslationChoice) => {
+      const settings = writeTranslationSettings({ ...readTranslationSettings(), ...choice });
+      const apiKey = resolveTranslationKey(readByokSettings(), settings);
+      stop();
+      setNewTranslation(null);
+      setNotice(null);
+      // 포커스를 본문으로 옮겨 Space, M, Esc 가 동작하게 한다
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      const { sourceLanguage, targetLanguage, speakerOn } = choice;
+      const startedAt = Date.now();
+      const noteTitle = `번역 ${formatDateTime(startedAt)}`;
+      setTab('translate');
+      setPendingRow({ title: noteTitle, meta: `${pairLabel(sourceLanguage, targetLanguage)} · 연결 중` });
+      setSpeakerHint(speakerOn && !settings.speakerHintSeen);
+      setTranslation({
+        status: 'connecting',
+        delayed: false,
+        speaker: { intent: speakerOn ? 'on' : 'off', blocked: false, fuseTripped: false },
+        partial: { source: '', translation: '' },
+        sourceLanguage,
+        targetLanguage,
+        pausedAtMs: null,
+        bannerDismissed: false,
+      });
+      setOutcomes(new Map());
+      liveIndexRef.current = 0;
+      liveSentMsRef.current = 0;
+      const patchSession = (patch: Partial<TranslationSession>) =>
+        setTranslation((previous) => (previous ? { ...previous, ...patch } : previous));
+      const handlers: TranslationHandlers = {
+        onPartial: (text, _processedMs, translated = '') =>
+          setTranslation((previous) =>
+            previous && (previous.partial.source !== text || previous.partial.translation !== translated)
+              ? { ...previous, partial: { source: text, translation: translated } }
+              : previous,
+          ),
+        onFinal: (segment) => {
+          const index = liveIndexRef.current;
+          liveIndexRef.current += 1;
+          const meta: ChunkMeta = { index, startMs: segment.startMs, endMs: segment.endMs };
+          setOutcomes((previous) =>
+            new Map(previous).set(index, { kind: 'ok', meta, text: segment.text, translation: segment.translation }),
+          );
+        },
+        onError: (error) => console.warn(error.message),
+        onStatus: (status) => patchSession({ status }),
+        onDelay: (delayed) => patchSession({ delayed }),
+        onSpeaker: (speaker) => patchSession({ speaker }),
+        onFuseTripped: () => toast.show({ kind: 'info', title: '에코가 감지되었습니다', description: '이어폰을 쓰세요' }),
+      };
+      const controller = new AbortController();
+      translationAbortRef.current = controller;
+      void (async () => {
+        let recognizer: TranslationRecognizer;
+        try {
+          recognizer = await startTranslationRecognizer(
+            { apiKey, targetLanguage, noiseReduction: settings.noiseReduction, speakerOn, signal: controller.signal },
+            handlers,
+          );
+        } catch (error) {
+          // 취소는 stop 이 이미 화면을 되돌렸다. 그사이 시작한 새 세션을 건드리지 않는다
+          if (controller.signal.aborted) return;
+          translationAbortRef.current = null;
+          setTranslation(null);
+          setPendingRow(null);
+          setSpeakerHint(false);
+          await failTranslationStart(error, choice);
+          return;
+        }
+        if (controller.signal.aborted) {
+          recognizer.terminate();
+          return;
+        }
+        translationAbortRef.current = null;
+        translationRef.current = recognizer;
+        liveRecognizerRef.current = recognizer;
+        setPendingRow(null);
+        const now = Date.now();
+        const id = newProjectId();
+        const audio: ProjectAudio = {
+          kind: 'recording',
+          name: `${noteTitle}.wav`,
+          size: 0,
+          sha256: '',
+          durationMs: 0,
+          mimeType: 'audio/wav',
+        };
+        const project: Project = {
+          id,
+          title: noteTitle,
+          createdAt: now,
+          updatedAt: now,
+          audio,
+          splitOptions: null,
+          chunks: [],
+          doc: EMPTY_DOC,
+          translation: { sourceLanguage, targetLanguage, model: 'gpt-realtime-translate' },
+        };
+        setMode('new');
+        setActive(project);
+        persist(project);
+        pendingAudioRef.current = audio;
+        pendingRetryRef.current = null;
+        setSource(null);
+        setTitle(noteTitle);
+        setExpectedCount(null);
+        setDurationMs(null);
+        setEditorValue(EMPTY_DOC);
+        setDoc(EMPTY_DOC);
+        setCurrentMs(0);
+        queueRef.current = null;
+        setPhase('recording');
+        live.start(id).catch((error: unknown) => {
+          stop();
+          deleteProject(window.localStorage, id);
+          resetWorkspace();
+          refreshProjects();
+          toast.show({
+            kind: 'error',
+            title: '마이크를 시작할 수 없습니다',
+            description: error instanceof Error ? error.message : String(error),
+          });
+        });
+      })();
+    },
+    [stop, setActive, persist, setDoc, live, resetWorkspace, refreshProjects, toast, failTranslationStart],
+  );
+
+  const pauseRecording = useCallback(() => {
+    live.pause();
+    translationRef.current?.pause();
+    setTranslation((previous) => (previous ? { ...previous, pausedAtMs: Date.now() } : previous));
+  }, [live]);
+
+  const resumeRecording = useCallback(() => {
+    live.resume();
+    void translationRef.current?.resume();
+    setTranslation((previous) => (previous ? { ...previous, pausedAtMs: null } : previous));
+  }, [live]);
+
+  const speakerIntent = translation?.speaker;
+  const toggleSpeaker = useCallback(() => {
+    if (!speakerIntent) return;
+    const intent = speakerView(speakerIntent) === 'on' ? 'off' : 'on';
+    void translationRef.current?.setSpeaker(intent);
+    writeTranslationSettings({
+      ...readTranslationSettings(),
+      speakerOn: intent === 'on',
+      speakerHintSeen: readTranslationSettings().speakerHintSeen || intent === 'off',
+    });
+    if (intent === 'off') setSpeakerHint(false);
+  }, [speakerIntent]);
 
   /** 녹음 시작: 엔진을 확보하고(On-Device 면 sherpa 워커까지 띄운 뒤) 빈 녹음 노트를 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
   const startRecording = useCallback(() => {
@@ -1067,7 +1365,9 @@ export const TranscribeWorkspace = () => {
   const stopRecording = useCallback(() => {
     if (stoppingRef.current || phase !== 'recording') return;
     stoppingRef.current = true;
-    toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '녹음을 마무리하는 중…', progress: 0 });
+    const translating = translationRef.current !== null;
+    if (translating) setTranslation((previous) => (previous ? { ...previous, status: 'draining' } : previous));
+    else toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '녹음을 마무리하는 중…', progress: 0 });
     live
       .stop()
       .then(async (result) => {
@@ -1081,6 +1381,7 @@ export const TranscribeWorkspace = () => {
           // 마지막 세그먼트(finish 중 final)가 들어온 뒤에 기대 개수를 정한다
           await recognizer.finish();
           liveRecognizerRef.current = null;
+          translationRef.current = null;
           setStreamingLive(false);
           setLivePartial('');
           setExpectedCount(liveIndexRef.current);
@@ -1099,6 +1400,15 @@ export const TranscribeWorkspace = () => {
   useEffect(() => {
     stopRecordingRef.current = stopRecording;
   }, [stopRecording]);
+
+  // 번역이 끝나 노트가 확정되면 저장본 화면으로 바꾼다
+  useEffect(() => {
+    if (phase !== 'review' || !translation || translationRef.current || translationAbortRef.current) return;
+    setTranslation(null);
+    setSpeakerHint(false);
+    const settings = readTranslationSettings();
+    if (speakerHint && !settings.speakerHintSeen) writeTranslationSettings({ ...settings, speakerHintSeen: true });
+  }, [phase, translation, speakerHint]);
 
   // 저장하고 이동: 노트가 확정되면 기다리던 탭으로 옮긴다
   useEffect(() => {
@@ -1224,6 +1534,12 @@ export const TranscribeWorkspace = () => {
     [exportDoc, title, layout],
   );
 
+  /** 연결 중이면 취소, 그 뒤로는 저장하며 끝낸다 */
+  const stopTranslation = () => {
+    if (phase === 'recording') stopRecording();
+    else stop();
+  };
+
   const tabProjects = useMemo(() => projects.filter((meta) => tabOfMeta(meta) === tab), [projects, tab]);
   const recording = phase === 'recording';
   const busy = phase === 'splitting' || phase === 'transcribing' || recording;
@@ -1260,20 +1576,21 @@ export const TranscribeWorkspace = () => {
     : null;
 
   return (
-    <div className={styles.shell}>
-      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} navLocked={recording} />
+    <>
+    <div className={styles.shell} inert={newTranslation !== null}>
+      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} navLocked={recording || translation !== null} />
 
       <div className={styles.frame}>
         <Sidebar
           ref={sidebarRef}
           tab={tab}
           projects={tabProjects}
-          activeId={activeProject?.id ?? null}
-          disabled={busy}
+          activeId={connecting ? null : (activeProject?.id ?? null)}
+          disabled={busy || translation !== null}
           recording={recording}
           onSelectAudio={start}
           onImport={importProject}
-          onToggleRecord={recording ? stopRecording : startRecording}
+          onToggleRecord={translation !== null ? stopTranslation : recording ? stopRecording : startRecording}
           onNewNote={createBlankNote}
           onOpen={openProject}
           onRename={renameProject}
@@ -1281,11 +1598,23 @@ export const TranscribeWorkspace = () => {
           onExportDoc={exportProjectDoc}
           onDownloadAudio={downloadAudio}
           onDelete={removeProject}
+          onNewTranslation={openNewTranslation}
+          newTranslationOpen={newTranslation !== null}
+          translating={translation !== null}
+          liveLabel={translation?.status === 'paused' || translation?.status === 'parked' ? '일시정지' : '번역 중'}
+          pendingRow={pendingRow}
+          speakerHint={speakerHint}
         />
 
         <TabRow
           tab={tab}
-          running={recording ? { tab, muted: live.status === 'paused' } : null}
+          running={
+            translation !== null
+              ? { tab: 'translate', muted: live.status === 'paused' || draining }
+              : recording
+                ? { tab, muted: live.status === 'paused' }
+                : null
+          }
           locked={locked}
           onSelect={switchTab}
           savedAt={phase === 'review' ? savedAt : null}
@@ -1296,7 +1625,35 @@ export const TranscribeWorkspace = () => {
         <div className={styles.sheet}>
           <main className={styles.main}>
             <div className={styles.editorColumn}>
-              {showEditor ? (
+              {translation ? (
+                <TranslationLiveView
+                  blocks={assembled.blocks}
+                  partial={translation.partial}
+                  nextStartMs={live.emittedMs}
+                  status={translation.status}
+                  delayed={translation.delayed}
+                  sourceLanguage={translation.sourceLanguage}
+                  targetLanguage={translation.targetLanguage}
+                  banner={
+                    translation.bannerDismissed && translation.status === 'unavailable' ? null : (
+                      <TranslationBanner
+                        status={translation.status}
+                        pausedAtMs={translation.pausedAtMs}
+                        speakerBlocked={translation.speaker.blocked}
+                        speakerOn={translation.speaker.intent === 'on'}
+                        onReconnect={() => void translationRef.current?.reconnect()}
+                        onDismissUnavailable={() => setTranslation((previous) => (previous ? { ...previous, bannerDismissed: true } : previous))}
+                      />
+                    )
+                  }
+                />
+              ) : notice || (emptyNotice && !showEditor) ? (
+                <TranslationNotice
+                  kind={(notice ?? emptyNotice) as NoticeKind}
+                  onOpenSettings={() => router.push('/settings#translation')}
+                  onGoTranscribe={() => moveToTab('transcribe')}
+                />
+              ) : showEditor ? (
                 <Editor
                   value={editorValue}
                   editable={phase === 'review'}
@@ -1339,20 +1696,32 @@ export const TranscribeWorkspace = () => {
             />
           </main>
 
-          {recording ? (
+          {recording || translation ? (
             <RecordingBar
-              elapsedMs={live.elapsedMs}
+              elapsedMs={recording ? live.elapsedMs : 0}
               paused={live.status === 'paused'}
               levelsRef={live.levelsRef}
-              onPause={live.pause}
-              onResume={live.resume}
-              onStop={stopRecording}
+              onPause={recording ? pauseRecording : noop}
+              onResume={recording ? resumeRecording : noop}
+              onStop={translation ? stopTranslation : stopRecording}
+              speaker={translation ? { view: speakerView(translation.speaker), onToggle: toggleSpeaker } : undefined}
             />
-          ) : (
+          ) : tab === 'translate' && !showEditor ? null : (
             <PlayerBar ref={playerRef} source={source} durationMs={durationMs} onTimeUpdate={setCurrentMs} />
           )}
         </div>
       </div>
     </div>
+
+    {newTranslation ? (
+      <NewTranslationDialog
+        initial={newTranslation.choice}
+        initialFocus={newTranslation.focus}
+        micLabel={micLabel}
+        onClose={closeNewTranslation}
+        onStart={startTranslation}
+      />
+    ) : null}
+    </>
   );
 };
