@@ -108,6 +108,27 @@ macOS 에서 Homebrew rust 가 함께 있으면 `export PATH="/opt/homebrew/opt/
 
 `@rhwp/core` 의 wasm 은 `outputFileTracingIncludes` 로 standalone 에 포함된다. `.next/standalone/node_modules/@rhwp/core/rhwp_bg.wasm` 이 있는지 확인한다.
 
+### 3.5. Build Locally, Then Transfer
+
+```sh
+# 1. 로컬에서 빌드한다. NEXT_PUBLIC_SITE_URL 은 .env 에서 읽어 빌드에 고정된다.
+docker compose build malsaegim
+
+# 2. 이미지 아키텍처가 서버(uname -m)와 같은지 확인한다.
+docker image inspect malsaegim:latest --format '{{.Architecture}}'
+
+# 3. 서버로 옮긴다.
+docker save malsaegim:latest | gzip | ssh prod 'gunzip | docker load'
+
+# 4. 서버의 컨테이너를 새 이미지로 교체하고, 태그를 잃은 이전 이미지를 지운다.
+docker --context prod compose up -d --no-build --pull never malsaegim
+docker --context prod image prune -f
+```
+
+- 다른 Compose 파일을 쓰는 서버는 1번과 4번의 `compose` 뒤에 `-f <파일>` 을 붙인다.
+- 서버 아키텍처가 로컬과 다르면 1번을 `DOCKER_DEFAULT_PLATFORM=linux/amd64 docker compose build malsaegim` 처럼 실행한다. 에뮬레이션이라 훨씬 느리다.
+- 4번의 환경 변수는 로컬의 셸과 `.env` 에서 읽는다. 값을 바꿀 때 서버의 파일을 고칠 필요가 없다.
+
 ## 4. Building the Image
 
 ### 4.1. Build Stages
@@ -173,6 +194,17 @@ API 설정이 없는 브라우저는 서버가 `public/models/` 로 서빙하는
 - **외부 연결:** 앱 검증과 별도로 방화벽에서 컨테이너의 내부망, 클라우드 메타데이터 주소(`169.254.169.254`) 접근을 막는다.
 - **API 429:** 클라이언트가 지수 백오프로 재시도한다.
 - **녹음 원본:** WAV 는 서버에 올라가지 않고 각 브라우저의 IndexedDB 에만 남는다.
+
+### 7.1. Disk Cleanup
+
+```sh
+docker system df          # 사용량 확인
+docker builder prune -af  # 빌드 캐시 전체 삭제
+docker image prune -f     # 컨테이너가 쓰지 않는 태그 없는 이미지 삭제
+```
+
+- 빌드 캐시는 프로젝트별로 나뉘지 않는다. 같은 서버의 다른 프로젝트도 다음 빌드가 처음부터 돈다.
+- 같은 서버에 다른 서비스가 있으면 `docker system prune -a --volumes` 는 쓰지 않는다. 멈춘 서비스의 이미지와 사용 중이 아닌 볼륨까지 지운다.
 
 ## 8. Troubleshooting
 
