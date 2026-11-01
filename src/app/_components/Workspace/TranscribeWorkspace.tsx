@@ -87,6 +87,8 @@ type TranslationSession = {
   pausedAtMs: number | null;
   /** 번역 없이 녹음 계속을 골랐다 */
   bannerDismissed: boolean;
+  /** 마이크가 끊겼다 */
+  micLost: boolean;
 };
 
 type NewTranslationState = { choice: TranslationChoice; focus: 'source' | 'start' };
@@ -1120,6 +1122,8 @@ export const TranscribeWorkspace = () => {
       const settings = writeTranslationSettings({ ...readTranslationSettings(), ...choice });
       const apiKey = resolveTranslationKey(readByokSettings(), settings);
       stop();
+      // 라이브 화면 동안 에디터가 내려간다. 취소하거나 실패해 돌아올 때 지금 글로 다시 올라오게 한다
+      setEditorValue(docRef.current);
       setNewTranslation(null);
       setNotice(null);
       // 포커스를 본문으로 옮겨 Space, M, Esc 가 동작하게 한다
@@ -1139,6 +1143,7 @@ export const TranscribeWorkspace = () => {
         targetLanguage,
         pausedAtMs: null,
         bannerDismissed: false,
+        micLost: false,
       });
       setOutcomes(new Map());
       liveIndexRef.current = 0;
@@ -1164,6 +1169,7 @@ export const TranscribeWorkspace = () => {
         onStatus: (status) => patchSession({ status }),
         onDelay: (delayed) => patchSession({ delayed }),
         onSpeaker: (speaker) => patchSession({ speaker }),
+        onMicLost: () => patchSession({ micLost: true }),
         onFuseTripped: () => toast.show({ kind: 'info', title: '에코가 감지되었습니다', description: '이어폰을 쓰세요' }),
       };
       const controller = new AbortController();
@@ -1666,6 +1672,7 @@ export const TranscribeWorkspace = () => {
                         pausedAtMs={translation.pausedAtMs}
                         speakerBlocked={translation.speaker.blocked}
                         speakerOn={translation.speaker.intent === 'on'}
+                        micLost={translation.micLost}
                         onReconnect={() => void translationRef.current?.reconnect()}
                         onDismissUnavailable={() => setTranslation((previous) => (previous ? { ...previous, bannerDismissed: true } : previous))}
                       />

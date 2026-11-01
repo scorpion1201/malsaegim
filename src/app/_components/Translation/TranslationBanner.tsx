@@ -11,6 +11,7 @@ export type TranslationBannerProps = {
   pausedAtMs: number | null;
   speakerBlocked: boolean;
   speakerOn: boolean;
+  micLost: boolean;
   onReconnect: () => void;
   onDismissUnavailable: () => void;
 };
@@ -47,7 +48,7 @@ const useCountdown = (pausedAtMs: number | null): number => {
   return Math.max(0, PARK_AFTER_MS - (now - pausedAtMs));
 };
 
-export const TranslationBanner = ({ status, pausedAtMs, speakerBlocked, speakerOn, onReconnect, onDismissUnavailable }: TranslationBannerProps) => {
+export const TranslationBanner = ({ status, pausedAtMs, speakerBlocked, speakerOn, micLost, onReconnect, onDismissUnavailable }: TranslationBannerProps) => {
   const remainingMs = useCountdown(status === 'paused' ? pausedAtMs : null);
 
   if (status === 'paused' || status === 'parked') {
@@ -71,6 +72,19 @@ export const TranslationBanner = ({ status, pausedAtMs, speakerBlocked, speakerO
         <span className={styles.bannerText}>
           <span className={styles.bannerTitle}>번역을 다시 연결하는 중입니다</span>
           <span className={styles.bannerDetail}>녹음은 계속 저장됩니다.{speakerOn ? ' 연결되면 다시 들립니다.' : ''}</span>
+        </span>
+      </div>
+    );
+  }
+  if (status === 'unavailable' && micLost) {
+    return (
+      <div role="status" className={styles.bannerDanger}>
+        <span className={styles.bannerIconDanger}>
+          <WarnIcon />
+        </span>
+        <span className={styles.bannerText}>
+          <span className={styles.bannerTitleDanger}>마이크 연결이 끊겼습니다</span>
+          <span className={styles.bannerDetail}>녹음도 멈췄을 수 있습니다. 저장한 뒤 다시 시작하세요</span>
         </span>
       </div>
     );
