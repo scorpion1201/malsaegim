@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 말새김 — Rust → wasm, 모델 변환(python) · wasm 런타임(emscripten) · manifest, Next.js standalone build, minimal runtime.
+# 말새김 — Rust → wasm, 모델 받기(고정 리비전·sha256) · wasm 런타임(emscripten) · manifest, Next.js standalone build, minimal runtime.
 # Secrets (.env) are never baked into the image; pass them at run time with --env-file or -e.
 
 # WITH_MODELS=0 이면 모델·wasm 을 만들지 않는다 (public/models 가 비어 On-Device 는 "서버에 모델이 없습니다")
@@ -21,19 +21,19 @@ RUN cargo generate-lockfile \
  && cargo install wasm-bindgen-cli --version "$V" --locked
 RUN wasm-pack build crates/audio-splitter --target web --release --out-dir /build/pkg
 
-# ---------- 2) whisper 모델 변환: HF safetensors → ggml → q8_0 (python, CPU torch) ----------
-FROM python:3.12-slim AS convert
+# ---------- 2) whisper 모델: whisper.cpp 공식 ggml 배포본을 고정 리비전으로 받아 sha256 검증 ----------
+FROM alpine:3.22 AS fetch
 ARG WITH_MODELS
-RUN apt-get update && apt-get install -y --no-install-recommends git cmake build-essential ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache curl coreutils
 WORKDIR /build
-COPY scripts/models ./scripts/models
-RUN mkdir -p /out && if [ "$WITH_MODELS" = "1" ]; then WORK=/build/work sh scripts/models/convert-whisper.sh /out && rm -rf /build/work; fi
+COPY scripts/models/versions.sh scripts/models/fetch-whisper-models.sh ./scripts/models/
+RUN mkdir -p /out && if [ "$WITH_MODELS" = "1" ]; then WORK=/build/work sh scripts/models/fetch-whisper-models.sh /out && rm -rf /build/work; fi
 
-# ---------- 3) 엔진 wasm (emscripten + Rust): xtask 가 whisper.cpp/sherpa-onnx 를 클론해 두 wasm 을 만든다 ----------
+# ---------- 3) 엔진 wasm (emscripten + Rust): xtask 가 whisper.cpp 를 클론해 CPU·WebGPU 런타임 두 벌을 만든다 ----------
+# WebGPU 런타임은 emscripten 의 emdawnwebgpu 포트를 쓴다 (빌드 중 GitHub 릴리스에서 받는다)
 FROM emscripten/emsdk:4.0.23 AS emsdk
 ARG WITH_MODELS
-RUN apt-get update && apt-get install -y --no-install-recommends bzip2 curl ca-certificates git cmake \
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git cmake \
  && rm -rf /var/lib/apt/lists/*
 # Rust nightly + emscripten 타깃 + rust-src(build-std) — 엔진 래퍼는 Rust 이고 최종 링크는 emcc 가 한다
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain nightly --profile minimal \
@@ -43,12 +43,9 @@ ENV PATH="/root/.cargo/bin:${PATH}"
 WORKDIR /build
 COPY Cargo.toml ./
 COPY crates ./crates
-COPY scripts/models/versions.sh scripts/models/fetch-sherpa-model.sh ./scripts/models/
-# xtask: whisper.cpp/sherpa-onnx 클론 → malsaegim-engine.{js,wasm} + malsaegim-engine-stream.{js,wasm}
-# 그리고 sherpa 실시간 모델(onnx)을 내려받는다
+# xtask: whisper.cpp 클론 → malsaegim-engine.{js,wasm}(CPU) + malsaegim-engine-webgpu.{js,wasm}(WebGPU)
 RUN mkdir -p /out && if [ "$WITH_MODELS" = "1" ]; then \
       cargo run -p malsaegim-engine --bin xtask --release -- /out /build/work \
-   && WORK=/build/work sh scripts/models/fetch-sherpa-model.sh /out \
    && rm -rf /build/work target; fi
 
 # ---------- 4) manifest: 해시·크기 계산, 버전 디렉터리로 정리 ----------
@@ -56,7 +53,7 @@ FROM node:26-alpine AS manifest
 ARG WITH_MODELS
 WORKDIR /build
 COPY scripts/models/write-manifest.mjs ./
-COPY --from=convert /out ./src
+COPY --from=fetch /out ./src
 COPY --from=emsdk /out ./src
 RUN mkdir -p /out && if [ "$WITH_MODELS" = "1" ]; then node write-manifest.mjs ./src /out; fi
 
