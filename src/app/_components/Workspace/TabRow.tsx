@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import { TAB_LABEL, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import styles from './Workspace.module.css';
@@ -21,6 +21,14 @@ const TAB_WIDTH: Record<WorkspaceTab, number> = { transcribe: 96, translate: 116
 const TABS: WorkspaceTab[] = ['transcribe', 'translate'];
 /** 받아쓰기 96px + 간격 4px */
 const TRANSLATE_OFFSET = 100;
+
+/** 너비와 위치는 CSS 변수로 넘긴다 — 모바일은 두 탭이 절반씩 차지한다 */
+const tabVars = (item: WorkspaceTab) =>
+  ({
+    '--tab-width': `${TAB_WIDTH[item]}px`,
+    '--tab-offset': item === 'translate' ? `${TRANSLATE_OFFSET}px` : '0px',
+    '--tab-index': item === 'translate' ? 1 : 0,
+  }) as CSSProperties;
 
 const relative = (savedAt: number, now: number): string => {
   const seconds = Math.max(0, Math.round((now - savedAt) / 1000));
@@ -52,27 +60,25 @@ export const TabRow = ({ tab, running, locked, onSelect, savedAt, exportDisabled
   return (
     <div className={styles.tabRow}>
       <nav className={styles.tabs} aria-label="기능">
-        <span
-          className={styles.tabIndicator}
-          style={{ width: TAB_WIDTH[tab], transform: `translateX(${tab === 'translate' ? TRANSLATE_OFFSET : 0}px)` }}
-          aria-hidden="true"
-        />
+        <span className={styles.tabIndicator} style={tabVars(tab)} aria-hidden="true" />
         {TABS.map((item) => (
           <button
             key={item}
             type="button"
             className={item === tab ? styles.tabActive : styles.tab}
-            style={{ width: TAB_WIDTH[item] }}
+            style={tabVars(item)}
             aria-current={item === tab ? 'page' : undefined}
             aria-disabled={locked || undefined}
             onClick={() => onSelect(item)}
           >
-            {TAB_LABEL[item]}
-            {running?.tab === item ? (
-              <span className={running.muted ? styles.tabDotMuted : styles.tabDot}>
-                <span className={styles.srOnly}>진행 중</span>
-              </span>
-            ) : null}
+            <span className={styles.tabLabel}>
+              {TAB_LABEL[item]}
+              {running?.tab === item ? (
+                <span className={running.muted ? styles.tabDotMuted : styles.tabDot}>
+                  <span className={styles.srOnly}>진행 중</span>
+                </span>
+              ) : null}
+            </span>
           </button>
         ))}
       </nav>

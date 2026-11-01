@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react';
 import type { ProjectMeta } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
@@ -7,6 +8,8 @@ import type { WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { pairLabel } from '@/app/_lib/translation/languages';
 import { Menu, type MenuItem } from '../Menu/Menu';
+import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
+import { GearIcon } from './GearIcon';
 import styles from './Workspace.module.css';
 
 export type SidebarHandle = {
@@ -261,6 +264,15 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
             event.target.value = '';
           }}
         />
+
+        <div className={styles.drawerTop}>
+          <ThemeToggle />
+          {disabled ? null : (
+            <Link href="/settings" className={styles.gearButton} aria-label="설정">
+              <GearIcon />
+            </Link>
+          )}
+        </div>
 
         {tab === 'translate' ? (
           <div className={styles.sidebarTop}>

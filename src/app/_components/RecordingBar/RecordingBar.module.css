@@ -151,3 +151,50 @@
     animation: none;
   }
 }
+
+@media (max-width: 767px) {
+  .bar {
+    height: auto;
+    min-height: 64px;
+    gap: 8px;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  .stop {
+    width: 44px;
+    height: 44px;
+  }
+
+  .time {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px;
+    font-weight: 600;
+  }
+
+  .dot,
+  .dotPaused,
+  .pausedLabel,
+  .wave,
+  .hint {
+    display: none;
+  }
+
+  .speaker {
+    width: 44px;
+    height: 44px;
+  }
+
+  .speaker span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+
+  .quiet,
+  .save {
+    height: 44px;
+  }
+}

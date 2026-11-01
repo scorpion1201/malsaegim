@@ -82,3 +82,24 @@
   color: var(--muted);
   white-space: nowrap;
 }
+
+@media (max-width: 767px) {
+  .bar {
+    gap: 12px;
+    padding: 0 16px;
+  }
+
+  .play {
+    width: 44px;
+    height: 44px;
+  }
+
+  .time {
+    min-width: 0;
+    white-space: nowrap;
+  }
+
+  .hint {
+    display: none;
+  }
+}

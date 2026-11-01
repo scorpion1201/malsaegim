@@ -319,3 +319,36 @@
     display: none;
   }
 }
+
+@media (max-width: 767px) {
+  .toolbar,
+  .divider {
+    display: none;
+  }
+
+  .scroll {
+    padding: 16px;
+  }
+
+  .content :global(.tiptap p) {
+    margin-bottom: 16px;
+  }
+
+  .timestampWrapper {
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .content :global(.tiptap p[data-role='source']) {
+    padding-left: 0;
+  }
+
+  .content :global(.tiptap h1) {
+    font-size: 19px;
+  }
+
+  .liveRow {
+    flex-direction: column;
+    gap: 4px;
+  }
+}

@@ -774,3 +774,120 @@
     animation: none;
   }
 }
+
+@media (max-width: 767px) {
+  /* 하단 시트: 위 44px 막은 배경 탭으로 닫는 자리다 */
+  .overlay {
+    align-items: flex-end;
+    padding: 44px 0 0;
+  }
+
+  .panel {
+    width: 100%;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+  }
+
+  .closeButton {
+    width: 44px;
+    height: 44px;
+    margin: -8px -8px 0 0;
+  }
+
+  .selectBox,
+  .selectBoxWarn,
+  .swap,
+  .swapDisabled {
+    height: 44px;
+  }
+
+  .swap,
+  .swapDisabled {
+    width: 44px;
+  }
+
+  .panelActions .secondary {
+    height: 44px;
+  }
+
+  .panelActions .primary,
+  .panelActions .primaryBlocked {
+    flex: 1;
+    height: 44px;
+  }
+
+  .noticeActions {
+    flex-direction: column-reverse;
+  }
+
+  .noticeActions .secondary,
+  .noticeActions .primary {
+    height: 44px;
+  }
+
+  .live {
+    --target-size: 16px;
+    --cols: minmax(0, 1fr);
+  }
+
+  .viewTarget {
+    --target-size: 18px;
+  }
+
+  .liveToolbar {
+    padding: 8px 16px;
+  }
+
+  .languageChip,
+  .columnHead,
+  .columnLine {
+    display: none;
+  }
+
+  .liveRule {
+    margin: 0;
+  }
+
+  .liveColumns {
+    padding: 16px;
+    gap: 18px;
+  }
+
+  .liveLog {
+    gap: 18px;
+  }
+
+  .liveRow {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .chip,
+  .chipLive {
+    align-self: flex-start;
+  }
+
+  .targetCell,
+  .waitingCell {
+    order: 1;
+  }
+
+  .sourceCell {
+    order: 2;
+  }
+
+  .banner,
+  .bannerWarn,
+  .bannerDanger {
+    margin: 0;
+    padding: 8px 16px;
+    border-radius: 0;
+    flex-wrap: wrap;
+  }
+
+  .bannerPrimary,
+  .bannerSecondary {
+    height: 44px;
+  }
+}

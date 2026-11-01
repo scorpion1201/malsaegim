@@ -61,6 +61,7 @@ import { RecordingBar } from '../RecordingBar/RecordingBar';
 import { useDialog } from '../Dialog/DialogProvider';
 import { useToast } from '../Toast/ToastProvider';
 import { Sidebar, type SidebarHandle } from './Sidebar';
+import { SidebarDrawer } from './SidebarDrawer';
 import { TabRow } from './TabRow';
 import { TopBar } from './TopBar';
 import { useLiveRecording } from './useLiveRecording';
@@ -225,6 +226,8 @@ export const TranscribeWorkspace = () => {
   const [micLabel, setMicLabel] = useState('기본 마이크');
   const [pendingRow, setPendingRow] = useState<{ title: string; meta: string } | null>(null);
   const [speakerHint, setSpeakerHint] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const menuReturnRef = useRef<HTMLElement | null>(null);
 
   const playerRef = useRef<PlayerBarHandle>(null);
   const sidebarRef = useRef<SidebarHandle>(null);
@@ -1241,6 +1244,22 @@ export const TranscribeWorkspace = () => {
     [stop, setActive, persist, setDoc, live, resetWorkspace, refreshProjects, toast, failTranslationStart],
   );
 
+  const openDrawer = useCallback(() => {
+    menuReturnRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setDrawerOpen(true);
+  }, []);
+
+  const closeDrawer = useCallback(() => {
+    setDrawerOpen(false);
+    menuReturnRef.current?.focus();
+  }, []);
+
+  // 노트를 열거나 번역 레이어를 띄우면 서랍을 닫는다
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setDrawerOpen(false);
+  }, [activeProject?.id, newTranslation, phase, tab]);
+
   const pauseRecording = useCallback(() => {
     live.pause();
     translationRef.current?.pause();
@@ -1578,33 +1597,39 @@ export const TranscribeWorkspace = () => {
   return (
     <>
     <div className={styles.shell} inert={newTranslation !== null}>
-      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} navLocked={recording || translation !== null} />
+      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} navLocked={recording || translation !== null}
+        onOpenMenu={openDrawer}
+        subtitle={translation ? pairLabel(translation.sourceLanguage, translation.targetLanguage) : null}
+        inert={drawerOpen}
+      />
 
       <div className={styles.frame}>
-        <Sidebar
-          ref={sidebarRef}
-          tab={tab}
-          projects={tabProjects}
-          activeId={connecting ? null : (activeProject?.id ?? null)}
-          disabled={busy || translation !== null}
-          recording={recording}
-          onSelectAudio={start}
-          onImport={importProject}
-          onToggleRecord={translation !== null ? stopTranslation : recording ? stopRecording : startRecording}
-          onNewNote={createBlankNote}
-          onOpen={openProject}
-          onRename={renameProject}
-          onExportJson={exportProject}
-          onExportDoc={exportProjectDoc}
-          onDownloadAudio={downloadAudio}
-          onDelete={removeProject}
-          onNewTranslation={openNewTranslation}
-          newTranslationOpen={newTranslation !== null}
-          translating={translation !== null}
-          liveLabel={translation?.status === 'paused' || translation?.status === 'parked' ? '일시정지' : '번역 중'}
-          pendingRow={pendingRow}
-          speakerHint={speakerHint}
-        />
+        <SidebarDrawer open={drawerOpen} onClose={closeDrawer}>
+          <Sidebar
+            ref={sidebarRef}
+            tab={tab}
+            projects={tabProjects}
+            activeId={connecting ? null : (activeProject?.id ?? null)}
+            disabled={busy || translation !== null}
+            recording={recording}
+            onSelectAudio={start}
+            onImport={importProject}
+            onToggleRecord={translation !== null ? stopTranslation : recording ? stopRecording : startRecording}
+            onNewNote={createBlankNote}
+            onOpen={openProject}
+            onRename={renameProject}
+            onExportJson={exportProject}
+            onExportDoc={exportProjectDoc}
+            onDownloadAudio={downloadAudio}
+            onDelete={removeProject}
+            onNewTranslation={openNewTranslation}
+            newTranslationOpen={newTranslation !== null}
+            translating={translation !== null}
+            liveLabel={translation?.status === 'paused' || translation?.status === 'parked' ? '일시정지' : '번역 중'}
+            pendingRow={pendingRow}
+            speakerHint={speakerHint}
+          />
+        </SidebarDrawer>
 
         <TabRow
           tab={tab}
@@ -1622,7 +1647,7 @@ export const TranscribeWorkspace = () => {
           onExport={exportDocument}
         />
 
-        <div className={styles.sheet}>
+        <div className={styles.sheet} inert={drawerOpen}>
           <main className={styles.main}>
             <div className={styles.editorColumn}>
               {translation ? (
@@ -1678,6 +1703,9 @@ export const TranscribeWorkspace = () => {
                     <>
                       <span className={styles.emptyTitle}>새 번역을 시작하세요</span>
                       <span>왼쪽의 새 번역을 누르면 언어를 고르고 시작합니다. 저장된 번역 노트는 목록에서 열 수 있습니다.</span>
+                      <button type="button" className={styles.emptyAction} onClick={openNewTranslation}>
+                        새 번역
+                      </button>
                     </>
                   ) : (
                     <>
@@ -1709,6 +1737,17 @@ export const TranscribeWorkspace = () => {
           ) : tab === 'translate' && !showEditor ? null : (
             <PlayerBar ref={playerRef} source={source} durationMs={durationMs} onTimeUpdate={setCurrentMs} />
           )}
+          {tab === 'transcribe' && !recording ? (
+            <div className={styles.mobileBar}>
+              <button type="button" className={styles.mobileRecord} disabled={busy} onClick={startRecording}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="9" y="3" width="6" height="11" rx="3" />
+                  <path d="M5 11a7 7 0 0 0 14 0M12 18v3M8 21h8" />
+                </svg>
+                녹음
+              </button>
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

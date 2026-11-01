@@ -13,11 +13,21 @@ type TopBarProps = {
   onTitleChange: (title: string) => void;
   /** 진행 중에는 설정으로 나갈 수 없다 */
   navLocked: boolean;
+  /** 모바일 서랍 열기 */
+  onOpenMenu: () => void;
+  /** 모바일 제목 아래 줄 (번역 중 두 언어) */
+  subtitle: string | null;
+  inert: boolean;
 };
 
-export const TopBar = ({ title, titleVisible, onTitleChange, navLocked }: TopBarProps) => (
-  <header className={styles.topBar}>
-    <div className={styles.topLeft}>
+export const TopBar = ({ title, titleVisible, onTitleChange, navLocked, onOpenMenu, subtitle, inert }: TopBarProps) => (
+  <header className={styles.topBar} inert={inert}>
+    <button type="button" className={styles.menuButton} aria-label="노트 목록" onClick={onOpenMenu}>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
+        <path d="M4 7h16M4 12h16M4 17h16" />
+      </svg>
+    </button>
+    <div className={titleVisible ? `${styles.topLeft} ${styles.topLeftNoted}` : styles.topLeft}>
       <Link href="/" className={styles.logo} draggable={false} aria-label="말새김 홈">
         <Image src="/app-logo.png" alt="" width={44} height={44} priority draggable={false} className={styles.logoMark} />
         말새김
@@ -40,10 +50,11 @@ export const TopBar = ({ title, titleVisible, onTitleChange, navLocked }: TopBar
             <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
           </svg>
         </label>
+        {subtitle ? <span className={styles.titleSub}>{subtitle}</span> : null}
       </div>
     ) : null}
 
-    <div className={styles.topRight}>
+    <div className={`${styles.topRight} ${styles.topRightWide}`}>
       <div className={styles.themeSlot}>
         <ThemeToggle />
       </div>

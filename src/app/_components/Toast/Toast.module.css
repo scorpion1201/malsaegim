@@ -158,3 +158,12 @@
   background: var(--accent);
   transition: width 0.2s;
 }
+
+@media (max-width: 767px) {
+  .stack {
+    right: 16px;
+    left: 16px;
+    width: auto;
+    bottom: calc(84px + env(safe-area-inset-bottom));
+  }
+}
