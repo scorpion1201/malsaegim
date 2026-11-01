@@ -84,16 +84,16 @@ const OUTPUT_SAMPLE_RATE = 16000;
 /** 워커로 넘길 프레임 크기 — 100ms(16kHz). 잘게 넘기면 malloc/ccall/디코드 호출 오버헤드가 커져 실시간을 못 따라간다 */
 const OUTPUT_FRAME = 1600;
 
+// 에코 제거는 끈다: 이 앱은 녹음 중 소리를 내지 않는데, OS 의 에코 제거가 스피커로 나오는
+// 다른 사람 목소리(회의 스피커폰 등)를 "에코"로 보고 몇 초 뒤부터 지워 버린다.
+export const MIC_AUDIO_CONSTRAINTS = { echoCancellation: false, noiseSuppression: true, autoGainControl: true };
+
 /** 마이크 → Float32 샘플 콜백. AudioWorklet 을 못 쓰는 브라우저는 ScriptProcessor 로 대체한다 */
 export const startMicCapture = async (onSamples: (samples: Float32Array) => void): Promise<MicCapture> => {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('이 브라우저나 주소에서는 마이크를 쓸 수 없습니다 (HTTPS 또는 localhost 필요)');
   }
-  // 에코 제거는 끈다: 이 앱은 녹음 중 소리를 내지 않는데, OS 의 에코 제거가 스피커로 나오는
-  // 다른 사람 목소리(회의 스피커폰 등)를 "에코"로 보고 몇 초 뒤부터 지워 버린다.
-  const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: false, noiseSuppression: true, autoGainControl: true },
-  });
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS });
   const context = createContext();
   await context.resume();
   const source = context.createMediaStreamSource(stream);
