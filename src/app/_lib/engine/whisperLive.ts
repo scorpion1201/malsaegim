@@ -15,7 +15,7 @@ import type { LiveWord, WhisperRequest } from './whisperProtocol';
 const MAX_RESTARTS = 1;
 
 export type WhisperLiveOptions = {
-  /** 창 길이에 맞춰 인코더를 줄인다(audio_ctx). 기본: CPU 백엔드일 때만 (WebGPU 는 30초 인코더도 빠르므로 정확도를 지킨다) */
+  /** 부분 자막 인식의 인코더를 창 길이로 줄인다(audio_ctx). 기본: CPU 백엔드일 때만. 확정 인식은 항상 전체 인코더 */
   reduceAudioCtx?: boolean;
 };
 

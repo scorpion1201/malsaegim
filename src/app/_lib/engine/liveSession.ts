@@ -22,8 +22,11 @@ const STEP_MS = 1000;
 const MIN_WINDOW_MS = 800;
 /** 말소리 뒤 이만큼 조용하면 발화 끝 */
 const ENDPOINT_MS = 700;
-/** 발화 끝 flush 는 마지막 말소리 뒤 이만큼까지만 — 그 뒤에 막 시작한 다음 발화의 첫머리를 자르지 않는다(짧은 조각은 환각을 부른다) */
-const FLUSH_PAD_MS = 250;
+/**
+ * 발화 끝 flush 는 마지막 말소리(hangover 포함) 뒤 이만큼까지만 — 다음 발화의 첫머리를 넣지 않고,
+ * 문장 뒤 무음을 짧게 둔다(무음이 길면 whisper 가 "MBC" 같은 꼬리 환각을 붙인다)
+ */
+const FLUSH_PAD_MS = 100;
 /** 창 안의 말소리가 이보다 짧으면 인식하지 않고 버린다 (잡음·숨소리) */
 const MIN_SPEECH_MS = 300;
 /** 한 번에 인식하는 창의 상한 — whisper 입력(30초)보다 짧게 */
@@ -78,7 +81,10 @@ export type LiveSessionHandlers = {
 };
 
 export type LiveSessionOptions = {
-  /** 창 길이만큼만 인코딩한다(audio_ctx) — CPU 에서 빠르지만 정확도가 조금 떨어질 수 있다 */
+  /**
+   * 부분 자막 인식을 창 길이만큼만 인코딩한다(audio_ctx) — CPU 에서 빠르지만 꼬리 환각·반복이 생길 수 있어
+   * 노트에 남는 확정(flush) 인식은 항상 30초 전체 인코더로 돌린다 (정확도 우선)
+   */
   reduceAudioCtx: boolean;
 };
 
@@ -364,7 +370,7 @@ export const createLiveSession = (recognize: Recognize, handlers: LiveSessionHan
     const windowStart = bufStartMs;
     const pcm = slice(windowEnd - windowStart);
     lastPassEndMs = windowEnd;
-    const audioCtx = options.reduceAudioCtx ? audioCtxFor(windowEnd - windowStart) : 0;
+    const audioCtx = options.reduceAudioCtx && !flush ? audioCtxFor(windowEnd - windowStart) : 0;
     const startedAt = Date.now();
     const recognition = recognize(pcm, audioCtx, { startMs: windowStart, endMs: windowEnd });
     inflight = recognition;
