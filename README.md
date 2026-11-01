@@ -54,7 +54,7 @@ Most speech-to-text tools stop at a text file. In Korea, work often isn't finish
 - **File transcription:** Import audio and get timestamped paragraphs. Failed chunks are marked in the editor, and you can retry just those.
 - **Live dictation:** Text appears as you speak. Recordings save continuously, so they survive a closed tab.
 - **Realtime translation:** Hear and read a live translation, with the original and translated text saved as paired paragraphs.
-- **On-device recognition:** Run Korean speech recognition in the browser with whisper.cpp and sherpa-onnx, without an API key.
+- **On-device recognition:** Run Korean speech recognition in the browser with whisper.cpp and Whisper large-v3-turbo, without an API key. Live captions and file transcription share one model.
 - **Bring your own API:** Connect any OpenAI-compatible transcription endpoint.
 - **HWP and HWPX export:** Set the paper size, margins, and fonts for each note, then download a native document.
 - **Made for daily use:** Autosave, audio playback, light and dark themes, and a responsive mobile layout are built in.
@@ -90,7 +90,7 @@ Follow a conversation across languages as it happens. The original and the trans
 | | On-Device | Bring Your Own API | Realtime Translation |
 |---|---|---|---|
 | **Best for** | Private Korean transcription | Long files and more languages | Live conversations |
-| **Engine** | whisper.cpp, sherpa-onnx | Your choice | OpenAI `gpt-realtime-translate` |
+| **Engine** | whisper.cpp (Whisper large-v3-turbo / small) | Your choice | OpenAI `gpt-realtime-translate` |
 | **API key** | Not required | Required | Required |
 | **Where audio goes** | Stays in your browser | Through the app server to your API | Directly to OpenAI over WebRTC |
 | **Languages** | Korean | Depends on your API | 58 target languages |
@@ -100,7 +100,7 @@ Follow a conversation across languages as it happens. The original and the trans
 
 ## Quick Start
 
-You'll need Docker. The first build takes 25 to 40 minutes because it converts the models and compiles the engines.
+You'll need Docker. The first build takes a while because it downloads the models (about 1.1 GB) and compiles the engines.
 
 ```sh
 git clone https://github.com/scorpion1201/malsaegim.git
@@ -119,7 +119,7 @@ To skip the on-device models or deploy behind a reverse proxy, see the [Deployme
 flowchart LR
     Input(["Audio file<br/>or microphone"]) --> Split["16 kHz chunks<br/>Rust + WebAssembly"]
     Split --> Router{"API<br/>configured?"}
-    Router -- "No" --> Local["On-device engine<br/>whisper.cpp, sherpa-onnx"]
+    Router -- "No" --> Local["On-device engine<br/>whisper.cpp"]
     Router -- "Yes" --> Remote["Your speech API"]
     Local --> Editor["Tiptap editor<br/>Review and fix"]
     Remote --> Editor
@@ -144,7 +144,7 @@ The browser handles audio processing, recognition, and editing. The Next.js serv
 | Web app | Next.js 16, React 19, TypeScript, CSS Modules |
 | Editor | Tiptap 3 |
 | Audio | Rust, WebAssembly, Web Workers, AudioWorklet |
-| On-device speech | whisper.cpp, sherpa-onnx, Emscripten |
+| On-device speech | whisper.cpp, Emscripten, WebGPU |
 | Realtime | WebRTC, OpenAI Realtime API |
 | Documents | `@rhwp/core` |
 | Deployment | Docker, Docker Compose |
@@ -165,8 +165,9 @@ Without `public/models`, the app still runs, but only with an API configured.
 
 ## Browser Support
 
-- **On-device recognition** needs WebAssembly SIMD and cross-origin isolation. It works in the latest Chrome, Edge, and Safari, including iPad Safari.
-- **iPad** may reload the tab under memory pressure, so use an API for long files.
+- **On-device recognition** needs WebAssembly SIMD and cross-origin isolation. It uses WebGPU when the browser supports it, and the CPU otherwise.
+- **Model per device:** PCs and iPads get Whisper large-v3-turbo. Phones get Whisper small unless they report 8 GB or more of memory. You can switch in Settings.
+- **Speed:** On CPU, Turbo is several times slower than real time on a 4-core machine, so live captions lag. Mobile and WebGPU performance hasn't been verified yet.
 - **Realtime translation** is tuned for Chrome, which provides echo cancellation for shared speakers.
 
 ## Known Limitations
@@ -187,8 +188,8 @@ Realtime translation is new, and these areas still need work:
 
 말새김 stands on the work of these projects:
 
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) for on-device recognition
-- [`seastar105/whisper-small-komixv2`](https://huggingface.co/seastar105/whisper-small-komixv2) for the Korean Whisper model
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for on-device recognition
+- [OpenAI Whisper](https://github.com/openai/whisper) large-v3-turbo and small, in the [whisper.cpp ggml distribution](https://huggingface.co/ggerganov/whisper.cpp)
 - [`@rhwp/core`](https://www.npmjs.com/package/@rhwp/core) for HWP and HWPX generation
 - [Tiptap](https://tiptap.dev) for the editor
 
