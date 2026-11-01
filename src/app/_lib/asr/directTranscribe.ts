@@ -6,6 +6,7 @@
  */
 import { resampleLinear } from '@/app/_lib/audio/micCapture';
 import { RECORDING_SAMPLE_RATE, floatToPcm16, wavToFloat32 } from '@/app/_lib/audio/wav';
+import type { NoiseReduction } from '@/app/_lib/settings/translationSettings';
 
 export type DirectTarget = {
   apiKey: string;
@@ -40,6 +41,8 @@ export type DirectResult = { text: string };
 
 const PROXY_PATH = '/api/asr/proxy';
 
+export const OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
 /** /audio/transcriptions 가 없고 Realtime 전사 세션으로만 되는 모델 */
 const REALTIME_ONLY_MODEL = /^(gpt-live-transcribe|gpt-realtime-whisper)(-|$)/i;
 export const REALTIME_SAMPLE_RATE = 24000;
@@ -60,13 +63,14 @@ export const toBase64 = (bytes: Uint8Array): string => {
   return btoa(binary);
 };
 
-/** pass-through 로 보낸다. 프록시 자체가 거부(403/413)하거나 네트워크가 끊기면 AsrNetworkError */
+/** pass-through 로 보낸다. 프록시 자체가 거부(403/413, error 가 문자열)하거나 네트워크가 끊기면 AsrNetworkError */
 const send = async (url: string, init: RequestInit & { headers: Record<string, string> }): Promise<Response> => {
   try {
     const response = await fetch(PROXY_PATH, { ...init, headers: { ...init.headers, 'x-asr-target-url': url } });
     if (response.status === 403 || response.status === 413) {
-      const body = (await response.json().catch(() => ({}))) as { error?: unknown };
-      throw new AsrNetworkError(typeof body.error === 'string' ? body.error : `HTTP ${response.status}`);
+      // 업스트림의 403 은 error 가 객체다 — 응답을 그대로 돌려 원래 메시지를 살린다
+      const body = (await response.clone().json().catch(() => ({}))) as { error?: unknown };
+      if (typeof body.error === 'string') throw new AsrNetworkError(body.error);
     }
     return response;
   } catch (error) {
@@ -119,6 +123,36 @@ export const mintRealtimeSecret = async (target: DirectTarget, signal?: AbortSig
   const payload: unknown = await response.json().catch(() => ({}));
   if (!response.ok) throw new AsrHttpError(response.status, errorMessage(payload, response.status));
   const secret = (payload as { value?: unknown }).value;
+  if (typeof secret !== 'string') throw new AsrHttpError(response.status, '응답에 임시 키가 없습니다');
+  return secret;
+};
+
+export type TranslationSecretRequest = { apiKey: string; targetLanguage: string; noiseReduction: NoiseReduction };
+
+/** 번역 세션 임시 키 발급 — 표준 키는 프록시까지만 가고, 수명 60초의 임시 키로 SDP 를 직접 교환한다 */
+export const mintTranslationSecret = async (request: TranslationSecretRequest, signal?: AbortSignal): Promise<string> => {
+  const response = await send(`${OPENAI_BASE_URL}/realtime/translations/client_secrets`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${request.apiKey}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      expires_after: { anchor: 'created_at', seconds: 60 },
+      session: {
+        model: 'gpt-realtime-translate',
+        audio: {
+          input: {
+            transcription: { model: 'gpt-realtime-whisper' },
+            noise_reduction: { type: request.noiseReduction },
+          },
+          output: { language: request.targetLanguage },
+        },
+      },
+    }),
+    signal,
+  });
+  const payload: unknown = await response.json().catch(() => ({}));
+  if (!response.ok) throw new AsrHttpError(response.status, errorMessage(payload, response.status));
+  const body = payload as { value?: unknown; client_secret?: { value?: unknown } };
+  const secret = body.value ?? body.client_secret?.value;
   if (typeof secret !== 'string') throw new AsrHttpError(response.status, '응답에 임시 키가 없습니다');
   return secret;
 };

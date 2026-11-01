@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { whenApiKeysReady } from '@/app/_lib/settings/apiKeyStore';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
 import { TranscribeWorkspace } from '../Workspace/TranscribeWorkspace';
 import { ModelDownloadCard } from './ModelDownloadCard';
@@ -41,8 +42,10 @@ export const HomeGate = () => {
     // localStorage·sessionStorage 는 서버 렌더와 다를 수 있어 마운트 뒤에 읽는다
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setBackground(readBackground());
-    setByok(isByokComplete(readByokSettings()));
-    setMounted(true);
+    void whenApiKeysReady().then(() => {
+      setByok(isByokComplete(readByokSettings()));
+      setMounted(true);
+    });
   }, []);
 
   const needsModel = !byok && model.status !== 'unavailable' && model.status !== 'unknown';

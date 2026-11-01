@@ -1,4 +1,6 @@
-/** 설정 페이지에서 저장하는 음성 인식 API 설정 — 이 브라우저(localStorage)에만 남는다 */
+import { getApiKey, setApiKey } from './apiKeyStore';
+
+/** 설정 페이지에서 저장하는 음성 인식 API 설정 — 주소와 모델은 localStorage, 키는 암호화 금고에 남는다 */
 export type ByokSettings = {
   apiKey: string;
   baseUrl: string;
@@ -7,7 +9,7 @@ export type ByokSettings = {
 
 export const EMPTY_BYOK_SETTINGS: ByokSettings = { apiKey: '', baseUrl: '', model: '' };
 
-const STORAGE_KEY = 'malsaegim:byok';
+const STORAGE_KEY = 'malsaegim:byok' as const;
 
 const normalize = (value: unknown): ByokSettings => {
   const raw = (typeof value === 'object' && value !== null ? value : {}) as Partial<Record<keyof ByokSettings, unknown>>;
@@ -19,7 +21,8 @@ export const readByokSettings = (): ByokSettings => {
   if (typeof window === 'undefined') return EMPTY_BYOK_SETTINGS;
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    return raw ? normalize(JSON.parse(raw)) : EMPTY_BYOK_SETTINGS;
+    const stored = normalize(raw ? JSON.parse(raw) : {});
+    return { ...stored, apiKey: stored.apiKey || getApiKey(STORAGE_KEY) };
   } catch {
     return EMPTY_BYOK_SETTINGS;
   }
@@ -30,7 +33,8 @@ export const writeByokSettings = (settings: ByokSettings): ByokSettings => {
   const next = normalize(settings);
   try {
     if (!next.apiKey && !next.baseUrl && !next.model) window.localStorage.removeItem(STORAGE_KEY);
-    else window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    else window.localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...next, apiKey: '' }));
+    setApiKey(STORAGE_KEY, next.apiKey);
   } catch {
     // 저장 실패(용량·프라이빗 모드)는 조용히 — 이번 세션 값은 그대로 쓴다
   }

@@ -415,3 +415,87 @@
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------- 실시간 번역 카드 ---------- */
+
+.backLink {
+  font-size: 13px;
+  color: var(--fg-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.backLink:hover {
+  color: var(--fg);
+}
+
+.fieldPair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.selectBox {
+  position: relative;
+  display: flex;
+  height: 36px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.selectBox:focus-within {
+  border-color: var(--accent);
+}
+
+.select {
+  flex: 1;
+  min-width: 0;
+  padding: 0 32px 0 12px;
+  border: 0;
+  border-radius: var(--radius);
+  outline: none;
+  appearance: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+}
+
+.selectChevron {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  margin-top: -7px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.segments {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.segment,
+.segmentActive {
+  flex: 1;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.segmentActive {
+  background: var(--surface);
+  color: var(--fg);
+  box-shadow: 0 1px 2px rgba(20, 20, 10, 0.12);
+}

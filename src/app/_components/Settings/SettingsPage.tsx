@@ -2,7 +2,8 @@
 
 import Image from 'next/image';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { whenApiKeysReady } from '@/app/_lib/settings/apiKeyStore';
 import { ASR_LANGUAGE, AsrHttpError, transcribeDirect } from '@/app/_lib/asr/directTranscribe';
 import { RECORDING_SAMPLE_RATE, encodeWavPcm16 } from '@/app/_lib/audio/wav';
 import {
@@ -12,14 +13,21 @@ import {
   writeByokSettings,
   type ByokSettings,
 } from '@/app/_lib/settings/byokSettings';
+import { readWorkspaceState, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
+import {
+  DEFAULT_TRANSLATION_SETTINGS,
+  readTranslationSettings,
+  writeTranslationSettings,
+  type TranslationSettings,
+} from '@/app/_lib/settings/translationSettings';
 import { ThemeToggle } from '../ThemeToggle/ThemeToggle';
 import { useToast } from '../Toast/ToastProvider';
 import { OnDeviceModelCard } from './OnDeviceModelCard';
+import { CheckIcon, CrossIcon, EyeIcon, type TestState } from './parts';
+import { TranslationCard } from './TranslationCard';
 import { GearIcon } from '../Workspace/GearIcon';
 import topStyles from '../Workspace/Workspace.module.css';
 import styles from './Settings.module.css';
-
-type TestState = { kind: 'idle' } | { kind: 'busy' } | { kind: 'ok' } | { kind: 'fail'; detail: string };
 
 const sameSettings = (a: ByokSettings, b: ByokSettings): boolean =>
   a.apiKey === b.apiKey && a.baseUrl === b.baseUrl && a.model === b.model;
@@ -37,30 +45,10 @@ const KeyIcon = () => (
   </svg>
 );
 
-const EyeIcon = ({ open }: { open: boolean }) => (
-  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12z" />
-    <circle cx="12" cy="12" r="3" />
-    {open ? null : <path d="M4 4l16 16" />}
-  </svg>
-);
-
-const CheckIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M5 12l5 5L20 7" />
-  </svg>
-);
-
-const CrossIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
-    <path d="M6 6l12 12M18 6L6 18" />
-  </svg>
-);
-
 /** 1초 무음 WAV — 연결 테스트용 (키·주소·모델이 맞으면 빈 텍스트가 돌아온다) */
 const silentTestWav = (): Uint8Array => encodeWavPcm16(new Int16Array(RECORDING_SAMPLE_RATE), RECORDING_SAMPLE_RATE);
 
-export const SettingsPage = () => {
+const SettingsForm = () => {
   const toast = useToast();
   // 첫 렌더에서 localStorage 를 읽는다 — 서버 렌더와 다를 수 있어 이 페이지는 클라이언트 전용이다
   const [saved, setSaved] = useState<ByokSettings>(() => readByokSettings());
@@ -68,7 +56,18 @@ export const SettingsPage = () => {
   const [showKey, setShowKey] = useState(false);
   const [test, setTest] = useState<TestState>({ kind: 'idle' });
 
-  const dirty = !sameSettings(trimAll(draft), saved);
+  const [savedTranslation, setSavedTranslation] = useState<TranslationSettings>(() => readTranslationSettings());
+  const [translationDraft, setTranslationDraft] = useState<TranslationSettings>(savedTranslation);
+  const [backTab, setBackTab] = useState<WorkspaceTab>('transcribe');
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setBackTab(readWorkspaceState().tab);
+  }, []);
+
+  const dirty =
+    !sameSettings(trimAll(draft), saved) ||
+    JSON.stringify({ ...translationDraft, apiKey: translationDraft.apiKey.trim() }) !== JSON.stringify(savedTranslation);
   const keyed = isByokComplete(saved);
 
   const update = (patch: Partial<ByokSettings>) => {
@@ -80,6 +79,9 @@ export const SettingsPage = () => {
     const next = writeByokSettings(draft);
     setSaved(next);
     setDraft(next);
+    const nextTranslation = writeTranslationSettings(translationDraft);
+    setSavedTranslation(nextTranslation);
+    setTranslationDraft(nextTranslation);
     toast.show(
       isByokComplete(next)
         ? { kind: 'success', title: '설정을 저장했습니다', description: '다음 인식부터 이 설정으로 요청합니다' }
@@ -89,6 +91,7 @@ export const SettingsPage = () => {
 
   const reset = () => {
     setDraft(EMPTY_BYOK_SETTINGS);
+    setTranslationDraft(DEFAULT_TRANSLATION_SETTINGS);
     setTest({ kind: 'idle' });
   };
 
@@ -105,7 +108,8 @@ export const SettingsPage = () => {
     } catch (error) {
       const detail =
         error instanceof AsrHttpError ? `${error.status} · ${error.message}` : error instanceof Error ? error.message : String(error);
-      setTest({ kind: 'fail', detail });
+      const translationModel = /^gpt-realtime-translate/i.test(candidate.model);
+      setTest({ kind: 'fail', detail: translationModel ? `${detail} · 번역 모델은 아래 실시간 번역 설정을 쓰세요` : detail });
     }
   };
 
@@ -119,6 +123,9 @@ export const SettingsPage = () => {
           </Link>
         </div>
         <div className={topStyles.topRight}>
+          <Link href="/" className={styles.backLink}>
+            {backTab === 'translate' ? '실시간 번역으로' : '받아쓰기로'} 돌아가기
+          </Link>
           <div className={topStyles.themeSlot}>
             <ThemeToggle />
           </div>
@@ -193,7 +200,7 @@ export const SettingsPage = () => {
                   <EyeIcon open={showKey} />
                 </button>
               </span>
-              <span className={styles.hint}>입력한 키는 이 브라우저에만 저장됩니다. 공용 PC에서는 사용 후 지워 주세요</span>
+              <span className={styles.hint}>입력한 키는 이 브라우저에 암호화해 저장됩니다. 공용 PC에서는 사용 후 지워 주세요</span>
             </label>
 
             <label className={styles.field}>
@@ -231,6 +238,12 @@ export const SettingsPage = () => {
             </div>
           </section>
 
+          <TranslationCard
+            draft={translationDraft}
+            byok={trimAll(draft)}
+            onChange={(patch) => setTranslationDraft((previous) => ({ ...previous, ...patch }))}
+          />
+
           <div className={styles.actions}>
             <button type="button" className={styles.secondary} onClick={reset} data-tooltip="입력을 모두 비웁니다">
               초기화
@@ -243,4 +256,15 @@ export const SettingsPage = () => {
       </main>
     </div>
   );
+};
+
+/** 금고에서 키를 읽은 뒤에 폼을 그린다 — 먼저 그리면 저장된 키가 빈 값으로 보인다 */
+export const SettingsPage = () => {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    void whenApiKeysReady().then(() => setReady(true));
+  }, []);
+
+  return ready ? <SettingsForm /> : null;
 };
