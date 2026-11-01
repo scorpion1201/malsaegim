@@ -1,4 +1,4 @@
-//! whisper 할루시네이션 억제 — 무음/패딩 위 세그먼트, 반복 루프, 무음 상투구, 중복 문장을 지운다.
+//! whisper 할루시네이션 억제 — 무음/패딩 위 세그먼트, 반복 루프, 무음 상투구, 중복 문장을 지운다 (파일 전사·실시간 공용).
 //! whisper.cpp 가 넘긴 세그먼트를 받아 정리한 텍스트를 돌려준다 (예전 whisper.worker.ts 의 cleanSegments 를 Rust 로 옮긴 것).
 
 /// whisper.cpp 세그먼트 하나
@@ -71,17 +71,30 @@ pub fn collapse_repeats(text: &str) -> String {
     twice.into_iter().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// 패딩 위·무음 확률 높은·자신 없는 세그먼트인가 (텍스트와 무관한 판정)
+fn is_unreliable(segment: &Segment, audio_ms: i64) -> bool {
+    segment.t0_ms >= audio_ms + TAIL_MS || segment.no_speech_prob > NO_SPEECH_DROP || segment.avg_logprob < LOGPROB_DROP
+}
+
+/// 실시간 창 인식에서 세그먼트를 그대로 둘지 — 어절 시각을 지켜야 해서 반복을 접지 않고, 반복 루프·상투구면 통째로 버린다
+pub fn keep_live_segment(segment: &Segment, audio_ms: i64) -> bool {
+    if is_unreliable(segment, audio_ms) {
+        return false;
+    }
+    let text = segment.text.trim();
+    if text.is_empty() || is_stock_phrase(text) {
+        return false;
+    }
+    let collapsed = collapse_repeats(text);
+    // 접어서 많이 줄어들면 디코더 루프다
+    collapsed.chars().count() * 10 >= text.split_whitespace().collect::<Vec<_>>().join(" ").chars().count() * 7
+}
+
 /// 세그먼트 목록 → 조각 텍스트. 패딩 위·무음 확률 높은·상투구·직전과 같은 세그먼트를 버리고 반복을 접는다
 pub fn clean_segments(segments: &[Segment], audio_ms: i64) -> String {
     let mut kept: Vec<String> = Vec::new();
     for segment in segments {
-        if segment.t0_ms >= audio_ms + TAIL_MS {
-            continue;
-        }
-        if segment.no_speech_prob > NO_SPEECH_DROP {
-            continue;
-        }
-        if segment.avg_logprob < LOGPROB_DROP {
+        if is_unreliable(segment, audio_ms) {
             continue;
         }
         let text = collapse_repeats(segment.text.trim());

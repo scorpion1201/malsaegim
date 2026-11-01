@@ -1,7 +1,8 @@
-//! 말새김 엔진 빌드 — bash 스크립트 없이 Rust 가 cargo/emcc 를 불러 두 wasm 을 만든다.
-//! 사용법: WHISPER_CPP_DIR=<whisper.cpp> SHERPA_ONNX_DIR=<sherpa-onnx> cargo run -p xtask -- <out-dir>
-//!  - malsaegim-engine.{js,wasm}        : Rust 래퍼 + whisper.cpp (파일 전사, pthread)
-//!  - malsaegim-engine-stream.{js,wasm} : Rust 래퍼 + sherpa-onnx (실시간, 단일 스레드)
+//! 말새김 엔진 빌드 — bash 스크립트 없이 Rust 가 cargo/emcc 를 불러 엔진 wasm 을 만든다.
+//! 사용법: WHISPER_CPP_DIR=<whisper.cpp> cargo run -p malsaegim-engine --bin xtask --release -- <out-dir> [work-dir]
+//!  - malsaegim-engine.{js,wasm}        : Rust 래퍼 + whisper.cpp CPU (파일 전사·실시간 공용, pthread + SIMD)
+//!  - malsaegim-engine-webgpu.{js,wasm} : 위 + ggml WebGPU 백엔드 (ASYNCIFY). GPU 가 없거나 실패하면 앱이 CPU 런타임으로 돌아간다
+//! ASYNCIFY 계측은 CPU 경로까지 느리게 하므로 두 런타임을 따로 둔다.
 //! 래퍼는 Rust staticlib, 최종 링크는 emcc 가 한다 (rustc 가 직접 emscripten 링크하면 ggml 계산이 멈춘다).
 
 use std::env;
@@ -18,7 +19,6 @@ const TARGET: &str = "wasm32-unknown-emscripten";
 
 // 엔진 소스 고정 리비전 (scripts/models/versions.sh 와 맞춘다)
 const WHISPER_CPP_REF: &str = "v1.9.5";
-const SHERPA_ONNX_REF: &str = "v1.13.8";
 
 /// 없으면 얕은 클론한다. 있으면 그대로 쓴다.
 fn ensure_checkout(dir: &Path, url: &str, git_ref: &str) {
@@ -70,74 +70,37 @@ fn read_libs(feature: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-fn build_whisper(out: &Path, whisper_dir: &str) {
+fn build_whisper(out: &Path, whisper_dir: &str, webgpu: bool) {
+    let variant = if webgpu { "webgpu" } else { "cpu" };
     run(
-        "malsaegim-engine (whisper) 정적 라이브러리 (pthread, build-std)",
+        &format!("malsaegim-engine (whisper, {variant}) 정적 라이브러리 (pthread, build-std)"),
         Command::new("cargo")
             .args(["+nightly", "build", "-p", "malsaegim-engine", "--lib", "--features", "whisper", "--target", TARGET, "--release", "-Z", "build-std=std,panic_abort"])
             .env("MSG_PTHREAD", "1")
+            .env("MSG_WEBGPU", if webgpu { "1" } else { "0" })
             .env("RUSTFLAGS", "-C target-feature=+atomics,+bulk-memory,+mutable-globals")
             .env("WHISPER_CPP_DIR", whisper_dir),
     );
     let rustlib = rel().join("libmalsaegim_engine.a");
     assert!(rustlib.exists(), "{} 없음", rustlib.display());
-    let libs = read_libs("whisper");
+    let libs = read_libs(if webgpu { "whisper-webgpu" } else { "whisper" });
+    let name = if webgpu { "malsaegim-engine-webgpu.js" } else { "malsaegim-engine.js" };
     let mut link = Command::new("emcc");
-    link.args(["-O3", "-msimd128", "-pthread", "-Wl,--start-group"]).arg(&rustlib);
+    // workerfs: 캐시의 Blob 을 복사 없이 FS 에 붙여 whisper 가 읽는 만큼만 FileReaderSync 로 가져온다 (모델 ≈ 874 MB)
+    link.args(["-O3", "-msimd128", "-pthread", "-lworkerfs.js", "-Wl,--start-group"]).arg(&rustlib);
     for l in &libs { link.arg(l); }
-    link.arg("-Wl,--end-group").arg("-o").arg(out.join("malsaegim-engine.js")).args([
+    link.arg("-Wl,--end-group").arg("-o").arg(out.join(name)).args([
         "-sINVOKE_RUN=0", "-sMODULARIZE=1", "-sEXPORT_ES6=1", "-sEXPORT_NAME=createMalsaegimEngine",
         "-sENVIRONMENT=worker", "-sPTHREAD_POOL_SIZE=10", "-sPTHREAD_POOL_SIZE_STRICT=2",
         "-sINITIAL_MEMORY=512MB", "-sMAXIMUM_MEMORY=2048MB", "-sALLOW_MEMORY_GROWTH=1", "-sFORCE_FILESYSTEM=1",
-        "-sEXPORTED_FUNCTIONS=_msg_init,_msg_free,_msg_transcribe,_msg_free_cstr,_malloc,_free",
-        "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,FS,HEAPU8,HEAPF32,UTF8ToString,stringToUTF8,lengthBytesUTF8,print,printErr",
+        "-sEXPORTED_FUNCTIONS=_msg_init,_msg_gpu_name,_msg_free,_msg_transcribe,_msg_transcribe_live,_msg_free_cstr,_malloc,_free",
+        "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,FS,WORKERFS,HEAPU8,HEAPF32,UTF8ToString,stringToUTF8,lengthBytesUTF8,print,printErr",
     ]);
-    run("emcc 링크: malsaegim-engine (whisper.cpp)", &mut link);
-}
-
-/// sherpa-onnx wasm 정적 라이브러리 빌드 (한 번, upstream 빌드 스크립트). install/lib 경로를 돌려준다.
-fn build_sherpa_libs(sherpa_dir: &str) -> PathBuf {
-    let install = PathBuf::from(sherpa_dir).join("build-wasm-simd-asr/install/lib");
-    if install.join("libsherpa-onnx-c-api.a").exists() {
-        eprintln!("[xtask] sherpa 정적 라이브러리 이미 있음 → 건너뜀");
-        return install;
+    if webgpu {
+        // ggml-webgpu 는 어댑터·버퍼 매핑을 기다린다 — ASYNCIFY 로 동기 C++ 호출을 JS Promise 에 잇는다 (워커는 ccall async 로 부른다)
+        link.args(["--use-port=emdawnwebgpu", "-sASYNCIFY", "-sASYNCIFY_STACK_SIZE=1048576", "-fexceptions"]);
     }
-    // CMake 가 존재만 검사하는 assets 를 빈 파일로 채운다
-    let assets = PathBuf::from(sherpa_dir).join("wasm/asr/assets");
-    std::fs::create_dir_all(&assets).unwrap();
-    for f in ["encoder.onnx", "decoder.onnx", "joiner.onnx", "tokens.txt"] {
-        let _ = std::fs::write(assets.join(f), b"");
-    }
-    run(
-        "sherpa-onnx wasm 빌드 (정적 라이브러리, upstream)",
-        Command::new("./build-wasm-simd-asr.sh").current_dir(sherpa_dir),
-    );
-    install
-}
-
-fn build_stream(out: &Path, sherpa_dir: &str) {
-    let install = build_sherpa_libs(sherpa_dir);
-    run(
-        "malsaegim-engine (stream) 정적 라이브러리 (단일 스레드)",
-        Command::new("cargo")
-            .args(["build", "-p", "malsaegim-engine", "--lib", "--features", "stream", "--target", TARGET, "--release"])
-            .env("SHERPA_ONNX_DIR", sherpa_dir)
-            .env("SHERPA_BUILD_DIR", &install),
-    );
-    let rustlib = rel().join("libmalsaegim_engine.a");
-    assert!(rustlib.exists(), "{} 없음", rustlib.display());
-    let libs = read_libs("stream");
-    let mut link = Command::new("emcc");
-    link.args(["-O3", "-msimd128", "-sSTACK_SIZE=10485760", "-Wl,--start-group"]).arg(&rustlib);
-    for l in &libs { link.arg(l); }
-    link.arg("-Wl,--end-group").arg("-o").arg(out.join("malsaegim-engine-stream.js")).args([
-        "-sINVOKE_RUN=0", "-sMODULARIZE=1", "-sEXPORT_ES6=1", "-sEXPORT_NAME=createMalsaegimStream",
-        "-sENVIRONMENT=worker", "-sINITIAL_MEMORY=512MB", "-sMAXIMUM_MEMORY=2048MB",
-        "-sALLOW_MEMORY_GROWTH=1", "-sFORCE_FILESYSTEM=1",
-        "-sEXPORTED_FUNCTIONS=_mss_create,_mss_accept,_mss_is_endpoint,_mss_reset,_mss_input_finished,_mss_result,_mss_first_ts,_mss_destroy,_mss_free_cstr,_malloc,_free",
-        "-sEXPORTED_RUNTIME_METHODS=ccall,cwrap,FS,HEAPU8,HEAPF32,UTF8ToString,stringToUTF8,lengthBytesUTF8,print,printErr",
-    ]);
-    run("emcc 링크: malsaegim-engine-stream (sherpa-onnx)", &mut link);
+    run(&format!("emcc 링크: {name}"), &mut link);
 }
 
 fn main() {
@@ -146,19 +109,14 @@ fn main() {
     let work = PathBuf::from(env::args().nth(2).unwrap_or_else(|| "target/engine-src".into()));
     std::fs::create_dir_all(&work).unwrap();
 
-    // whisper.cpp / sherpa-onnx 체크아웃 — 환경변수로 주면 그것을, 아니면 work 에 클론한다
+    // whisper.cpp 체크아웃 — 환경변수로 주면 그것을, 아니면 work 에 클론한다
     let whisper = env::var("WHISPER_CPP_DIR").map(PathBuf::from).unwrap_or_else(|_| {
         let d = work.join("whisper.cpp");
         ensure_checkout(&d, "https://github.com/ggml-org/whisper.cpp", WHISPER_CPP_REF);
         d
     });
-    let sherpa = env::var("SHERPA_ONNX_DIR").map(PathBuf::from).unwrap_or_else(|_| {
-        let d = work.join("sherpa-onnx");
-        ensure_checkout(&d, "https://github.com/k2-fsa/sherpa-onnx", SHERPA_ONNX_REF);
-        d
-    });
 
-    build_whisper(&out, whisper.to_str().unwrap());
-    build_stream(&out, sherpa.to_str().unwrap());
+    build_whisper(&out, whisper.to_str().unwrap(), false);
+    build_whisper(&out, whisper.to_str().unwrap(), true);
     eprintln!("[xtask] 완료 → {}", out.display());
 }

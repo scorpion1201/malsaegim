@@ -50,8 +50,11 @@ const nextConfig: NextConfig = {
   },
   headers: async () => [
     { source: '/:path*', headers: [...ISOLATION_HEADERS, ...SECURITY_HEADERS] },
-    // 모델 파일은 버전(해시) 경로라 영구 캐시, manifest 는 매번 확인 — 뒤의 규칙이 같은 키를 덮으므로 manifest 를 나중에 둔다
-    { source: '/models/:version([0-9a-f]+)/:file*', headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }] },
+    // 엔진·모델 파일은 /models/<묶음>/<내용 해시>/ 경로라 영구 캐시, manifest 는 매번 확인 — 뒤의 규칙이 같은 키를 덮으므로 manifest 를 나중에 둔다
+    {
+      source: '/models/:group([a-z0-9._-]+)/:version([0-9a-f]{12})/:file*',
+      headers: [{ key: 'Cache-Control', value: 'public, max-age=31536000, immutable' }],
+    },
     { source: '/models/manifest.json', headers: [{ key: 'Cache-Control', value: 'no-cache' }] },
   ],
 };

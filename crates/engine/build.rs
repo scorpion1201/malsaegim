@@ -1,4 +1,4 @@
-//! malsaegim-engine 빌드: feature 에 따라 whisper.cpp(파일 전사) 또는 sherpa-onnx(실시간) 의 C 심을 컴파일하고,
+//! malsaegim-engine 빌드: whisper feature 면 whisper.cpp 와 C 심을 컴파일하고,
 //! 최종 emcc 링크(xtask)에 넘길 정적 라이브러리 목록을 `target/<...>/release/<feature>.libs` 로 남긴다.
 //! bash 없이 build.rs(Rust)가 emcmake/emcc 를 직접 부른다. 네이티브 빌드에서는 아무것도 하지 않는다.
 
@@ -28,15 +28,19 @@ fn write_libs(out: &Path, feature: &str, libs: &[PathBuf]) {
     std::fs::write(out.join(format!("{feature}.libs")), list.join("\n")).unwrap();
 }
 
-fn build_whisper(out: &Path, pthread: bool) {
+/// webgpu: ggml WebGPU 백엔드까지 넣은 변형 — 빌드 디렉터리와 링크 목록(whisper-webgpu.libs)을 따로 둔다
+fn build_whisper(out: &Path, pthread: bool, webgpu: bool) {
     let whisper_dir = env::var("WHISPER_CPP_DIR").expect("WHISPER_CPP_DIR 필요 (feature whisper)");
-    let build_dir = out.join("whisper-build");
+    let build_dir = out.join(if webgpu { "whisper-build-webgpu" } else { "whisper-build" });
     let cflags = format!("-DCMAKE_C_FLAGS={}", if pthread { "-pthread -msimd128" } else { "-msimd128" });
     let cxxflags = format!("-DCMAKE_CXX_FLAGS={}", if pthread { "-pthread -msimd128" } else { "-msimd128" });
     run(Command::new("emcmake").args([
         "cmake", "-S", &whisper_dir, "-B", build_dir.to_str().unwrap(),
         "-DCMAKE_BUILD_TYPE=Release", "-DWHISPER_BUILD_EXAMPLES=OFF", "-DWHISPER_BUILD_TESTS=OFF",
         "-DGGML_OPENMP=OFF", "-DGGML_NATIVE=OFF", "-DBUILD_SHARED_LIBS=OFF", &cflags, &cxxflags,
+        if webgpu { "-DGGML_WEBGPU=ON" } else { "-DGGML_WEBGPU=OFF" },
+        // JSPI 는 Chromium 계열에만 있다 — Safari(iPad 등)도 돌도록 ASYNCIFY 로 빌드한다
+        "-DGGML_WEBGPU_JSPI=OFF",
     ]));
     run(Command::new("cmake").args(["--build", build_dir.to_str().unwrap(), "--target", "whisper", "-j", "8"]));
 
@@ -56,29 +60,12 @@ fn build_whisper(out: &Path, pthread: bool) {
 
     let mut libs = vec![shim_a];
     find_archives(&build_dir, &mut libs);
-    write_libs(out, "whisper", &libs);
+    write_libs(out, if webgpu { "whisper-webgpu" } else { "whisper" }, &libs);
     println!("cargo:rerun-if-changed=csrc/whisper_shim.cpp");
     println!("cargo:rerun-if-env-changed=WHISPER_CPP_DIR");
+    println!("cargo:rerun-if-env-changed=MSG_WEBGPU");
 }
 
-fn build_stream(out: &Path) {
-    let sherpa_dir = env::var("SHERPA_ONNX_DIR").expect("SHERPA_ONNX_DIR 필요 (feature stream)");
-    let sherpa_build = env::var("SHERPA_BUILD_DIR").expect("SHERPA_BUILD_DIR 필요 (feature stream)");
-    let manifest = env::var("CARGO_MANIFEST_DIR").unwrap();
-    let shim_o = out.join("sherpa_shim.o");
-    let src = format!("{manifest}/csrc/sherpa_shim.cpp");
-    let shim_o_s = shim_o.to_str().unwrap().to_string();
-    run(Command::new("emcc").args(["-c", "-std=c++17", "-O3", "-msimd128", "-I", &sherpa_dir, &src, "-o", &shim_o_s]));
-    let shim_a = out.join("libsherpa_shim.a");
-    let _ = std::fs::remove_file(&shim_a);
-    run(Command::new("emar").args(["rcs", shim_a.to_str().unwrap(), &shim_o_s]));
-
-    let mut libs = vec![shim_a];
-    find_archives(Path::new(&sherpa_build), &mut libs);
-    write_libs(out, "stream", &libs);
-    println!("cargo:rerun-if-changed=csrc/sherpa_shim.cpp");
-    println!("cargo:rerun-if-env-changed=SHERPA_BUILD_DIR");
-}
 
 fn main() {
     let target = env::var("TARGET").unwrap_or_default();
@@ -88,9 +75,7 @@ fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     if env::var("CARGO_FEATURE_WHISPER").is_ok() {
         let pthread = std::env::var("MSG_PTHREAD").as_deref() != Ok("0");
-        build_whisper(&out, pthread);
-    }
-    if env::var("CARGO_FEATURE_STREAM").is_ok() {
-        build_stream(&out);
+        let webgpu = std::env::var("MSG_WEBGPU").as_deref() == Ok("1");
+        build_whisper(&out, pthread, webgpu);
     }
 }
