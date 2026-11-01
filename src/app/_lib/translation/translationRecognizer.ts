@@ -1,6 +1,6 @@
 import { AsrHttpError, AsrNetworkError, mintTranslationSecret, realtimeError } from '@/app/_lib/asr/directTranscribe';
 import { RECORDING_SAMPLE_RATE } from '@/app/_lib/audio/wav';
-import type { LiveRecognizer, LiveRecognizerHandlers } from '@/app/_lib/engine/sherpaEngine';
+import type { LiveRecognizer, LiveRecognizerHandlers } from '@/app/_lib/engine/liveTypes';
 import type { NoiseReduction } from '@/app/_lib/settings/translationSettings';
 import { formatTimestamp } from '@/app/_lib/time';
 import { createEchoFuse } from './echoFuse';

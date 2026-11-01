@@ -32,7 +32,7 @@ import {
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import { normalizePageLayout, type PageLayout } from '@/app/_lib/hwp/pageLayout';
 import { formatMb } from '@/app/_lib/engine/malsaegimEngine';
-import { startLiveRecognizer, type LiveRecognizer, type LiveRecognizerHandlers } from '@/app/_lib/engine/malsaegimEngine';
+import { startWhisperLive, whisperBackend, type LiveRecognizer, type LiveRecognizerHandlers } from '@/app/_lib/engine/malsaegimEngine';
 import { ASR_LANGUAGE, isRealtimeTarget } from '@/app/_lib/asr/directTranscribe';
 import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
@@ -183,7 +183,7 @@ export const TranscribeWorkspace = () => {
   const [livePartial, setLivePartial] = useState('');
   const [liveLagMs, setLiveLagMs] = useState(0);
   const [liveRestarting, setLiveRestarting] = useState(false);
-  /** 이번 녹음이 스트리밍(sherpa·Realtime) 경로인지 — 렌더에서 ref 를 읽지 않으려고 상태로 둔다 */
+  /** 이번 녹음이 스트리밍(On-Device whisper·Realtime) 경로인지 — 렌더에서 ref 를 읽지 않으려고 상태로 둔다 */
   const [streamingLive, setStreamingLive] = useState(false);
   const liveRecognizerRef = useRef<LiveRecognizer | null>(null);
   /** On-Device 녹음의 확정 세그먼트 번호 — 조각 번호와 무관하게 0부터 */
@@ -506,7 +506,7 @@ export const TranscribeWorkspace = () => {
         toast.dismiss(MODEL_TOAST);
       }
     }
-    const engine = selectEngine(modelRef.current.manifest);
+    const engine = selectEngine(modelRef.current.bundle);
     if (!engine) {
       toast.show({
         kind: 'error',
@@ -1291,7 +1291,7 @@ export const TranscribeWorkspace = () => {
     if (intent === 'off') setSpeakerHint(false);
   }, [speakerIntent]);
 
-  /** 녹음 시작: 엔진을 확보하고(On-Device 면 sherpa 워커까지 띄운 뒤) 빈 녹음 노트를 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
+  /** 녹음 시작: 엔진을 확보하고(On-Device 면 whisper 워커에 모델까지 올린 뒤) 빈 녹음 노트를 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
   const startRecording = useCallback(() => {
     if (phase === 'splitting' || phase === 'transcribing' || phase === 'recording') return;
     void (async () => {
@@ -1317,13 +1317,14 @@ export const TranscribeWorkspace = () => {
         onError: (error) =>
           toast.show({ kind: 'error', title: '실시간 인식이 멈췄습니다', description: `${error.message} · 녹음은 계속 저장됩니다` }),
       };
-      // 스트리밍 엔진: On-Device 는 sherpa, BYOK 는 Realtime 전용 모델. 그 밖의 BYOK 는 조각 단위 큐로 보낸다
+      // 스트리밍 엔진: On-Device 는 whisper 반복 인식(파일 전사와 같은 모델·워커), BYOK 는 Realtime 전용 모델.
+      // 그 밖의 BYOK 는 조각 단위 큐로 보낸다. On-Device 가 실패해도 음성을 API 로 보내지 않는다
       const settings = readByokSettings();
-      const manifest = modelRef.current.manifest;
-      if (engine.kind === 'ondevice' && !manifest) return;
+      const bundle = modelRef.current.bundle;
+      if (engine.kind === 'ondevice' && !bundle) return;
       const startStreaming =
-        engine.kind === 'ondevice' && manifest
-          ? () => startLiveRecognizer(manifest, handlers)
+        engine.kind === 'ondevice' && bundle
+          ? () => startWhisperLive(bundle, handlers)
           : engine.kind === 'byok' && isRealtimeTarget(settings)
             ? () => startRealtimeRecognizer({ ...settings, language: ASR_LANGUAGE }, handlers)
             : null;
@@ -1338,9 +1339,23 @@ export const TranscribeWorkspace = () => {
             kind: 'error',
             title: '실시간 인식 엔진을 시작할 수 없습니다',
             description: message,
-            actions: message.includes('다시 내려받아야') ? [{ label: '다시 받기', primary: true, onClick: () => modelRef.current.start() }] : undefined,
+            duration: 10_000,
+            actions: message.includes('다시 내려받아야')
+              ? [{ label: '다시 받기', primary: true, onClick: () => modelRef.current.start() }]
+              : message.includes('메모리')
+                ? [{ label: '설정 열기', primary: true, onClick: () => router.push('/settings') }]
+                : undefined,
           });
           return;
+        }
+        // GPU 가속 없이 큰 모델을 돌리면 자막이 입력보다 늦을 수 있다 — 녹음·저장은 그대로다
+        if (engine.kind === 'ondevice' && bundle?.model.tier === 'full' && whisperBackend() === 'cpu') {
+          toast.show({
+            kind: 'info',
+            title: 'GPU 가속 없이 인식합니다',
+            description: '이 브라우저에서 WebGPU 를 쓸 수 없어 실시간 자막이 늦게 확정될 수 있습니다. 녹음은 그대로 저장됩니다.',
+            duration: 8000,
+          });
         }
       }
       const now = Date.now();
@@ -1384,7 +1399,7 @@ export const TranscribeWorkspace = () => {
         });
       });
     })();
-  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, ensureEngine]);
+  }, [phase, stop, setActive, persist, setDoc, makeQueue, live, resetWorkspace, refreshProjects, toast, ensureEngine, router]);
 
   /** 녹음 중지: 마지막 조각까지 보내고, WAV 를 저장한 뒤 남은 인식이 끝나면 완료 효과가 노트를 확정한다 */
   const stopRecording = useCallback(() => {

@@ -13,13 +13,14 @@ type ModelSplashProps = {
   onEnter: () => void;
 };
 
-/** 첫 방문(API 미설정 · 모델 없음) 스플래시 — 모델 두 개를 진행률 하나로 보여 준다 */
+/** 첫 방문(API 미설정 · 모델 없음) 스플래시 — 엔진 런타임과 이 기기에 맞춘 모델 하나를 진행률 하나로 보여 준다 */
 export const ModelSplash = ({ onBackground, onEnter }: ModelSplashProps) => {
   const model = useModelDownload();
   const total = formatMb(model.totalBytes);
   const received = formatMb(model.receivedBytes);
   const ready = model.status === 'ready';
   const failed = model.status === 'error';
+  const modelName = model.selected ? `${model.selected.label} (${model.selected.quant.toUpperCase()})` : '한국어 On-Device 모델';
 
   return (
     <div className={styles.splash}>
@@ -43,7 +44,7 @@ export const ModelSplash = ({ onBackground, onEnter }: ModelSplashProps) => {
           {ready ? (
             <span className={styles.splashOk}>
               <CheckIcon />
-              한국어 On-Device 모델 · 약 {total} MB
+              {modelName} · 약 {total} MB
             </span>
           ) : failed ? (
             <span className={styles.splashFailed}>
@@ -51,7 +52,7 @@ export const ModelSplash = ({ onBackground, onEnter }: ModelSplashProps) => {
             </span>
           ) : (
             <span>
-              {received} / {total} MB · {formatEta(model.etaSec)}
+              {modelName} · {received} / {total} MB · {formatEta(model.etaSec)}
             </span>
           )}
           <span className={styles.tabular}>{ready ? '' : `${model.percent}%`}</span>
