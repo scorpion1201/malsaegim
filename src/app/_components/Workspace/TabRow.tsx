@@ -17,15 +17,15 @@ type TabRowProps = {
   onExport: (format: ExportFormat) => Promise<void>;
 };
 
-const TAB_WIDTH: Record<WorkspaceTab, number> = { transcribe: 96, translate: 116 };
+const TAB_WIDTH = 116;
 const TABS: WorkspaceTab[] = ['transcribe', 'translate'];
-/** 받아쓰기 96px + 간격 4px */
-const TRANSLATE_OFFSET = 100;
+/** 탭 너비 + 간격 4px */
+const TRANSLATE_OFFSET = TAB_WIDTH + 4;
 
 /** 너비와 위치는 CSS 변수로 넘긴다 — 모바일은 두 탭이 절반씩 차지한다 */
 const tabVars = (item: WorkspaceTab) =>
   ({
-    '--tab-width': `${TAB_WIDTH[item]}px`,
+    '--tab-width': `${TAB_WIDTH}px`,
     '--tab-offset': item === 'translate' ? `${TRANSLATE_OFFSET}px` : '0px',
     '--tab-index': item === 'translate' ? 1 : 0,
   }) as CSSProperties;
