@@ -76,6 +76,7 @@
 
 .toolLabel {
   font-weight: 500;
+  white-space: nowrap;
 }
 
 .separator {
@@ -285,4 +286,36 @@
 
 .failedRetry:hover {
   background: var(--danger-soft);
+}
+
+/* ---------- 번역 노트 ---------- */
+
+.noteLabel {
+  color: var(--accent);
+}
+
+.content :global(.tiptap p[data-role='translation']:has(+ p[data-role='source'])) {
+  margin-bottom: 4px;
+}
+
+/* 타임스탬프 칩 뒤의 번역 글과 왼쪽을 맞춘다 */
+.content :global(.tiptap p[data-role='source']) {
+  padding-left: 56px;
+  color: var(--fg-2);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.hideTimestamps .content :global(.tiptap p[data-role='source']) {
+  padding-left: 0;
+}
+
+.hideSource .content :global(.tiptap p[data-role='source']) {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .noteLabel {
+    display: none;
+  }
 }

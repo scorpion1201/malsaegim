@@ -3,7 +3,7 @@ import { formatTimestamp } from '@/app/_lib/time';
 export type ChunkMeta = { index: number; startMs: number; endMs: number };
 
 export type ChunkOutcome =
-    | { kind: 'ok'; meta: ChunkMeta; text: string }
+    | { kind: 'ok'; meta: ChunkMeta; text: string; translation?: string }
     | { kind: 'failed'; meta: ChunkMeta };
 
 export type TranscriptBlock = {
@@ -11,6 +11,8 @@ export type TranscriptBlock = {
   endMs: number;
   text: string;
   failed: boolean;
+  /** 번역 노트만 있다. 정의돼 있으면 문단 쌍으로 저장한다 */
+  translation?: string;
 };
 
 export type AssembledTranscript = {
@@ -21,6 +23,8 @@ export type AssembledTranscript = {
 };
 
 const SENTENCE_END = /[.?!다요]$/;
+
+const joinText = (a: string, b: string): string => [a, b].filter(Boolean).join(' ');
 
 /**
  * index 순으로 연속된 조각만 문단으로 조립한다.
@@ -46,14 +50,17 @@ export const assembleTranscript = (
             });
       } else {
        const text = outcome.text.trim();
-       if (text.length > 0) {
+       const translation = outcome.translation?.trim();
+       if (text.length > 0 || translation) {
          const previous = blocks[blocks.length - 1];
          const shortParagraph = mergeWindowMs !== null && previous !== undefined && previous.endMs - previous.startMs < mergeWindowMs;
-         if (previous && !previous.failed && (shortParagraph || !SENTENCE_END.test(previous.text))) {
-           previous.text = `${previous.text} ${text}`;
+         // 원문이 비어 있으면 번역 끝으로 문장 끝을 본다
+         if (previous && !previous.failed && (shortParagraph || !SENTENCE_END.test(previous.text || (previous.translation ?? '')))) {
+           previous.text = joinText(previous.text, text);
+           if (translation !== undefined) previous.translation = joinText(previous.translation ?? '', translation);
            previous.endMs = endMs;
              } else {
-           blocks.push({ startMs, endMs, text, failed: false });
+           blocks.push({ startMs, endMs, text, failed: false, ...(translation === undefined ? {} : { translation }) });
              }
           }
       }

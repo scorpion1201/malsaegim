@@ -11,7 +11,7 @@ import { deleteRecording, deleteRecordingParts, getRecording, putRecording } fro
 import { extractAudioRanges, splitAudioBuffer, type SplitHandle } from '@/app/_lib/audio/splitAudioFile';
 import { DEFAULT_SPLIT_OPTIONS, ON_DEVICE_SPLIT_OPTIONS, type AudioChunk, type ExtractRange, type SplitOptions } from '@/app/_lib/audio/types';
 import { extractWavRanges } from '@/app/_lib/audio/wav';
-import { blocksToTiptapDoc } from '@/app/_lib/editor/blocksToTiptapDoc';
+import { blocksToTiptapDoc, type BlockLanguages } from '@/app/_lib/editor/blocksToTiptapDoc';
 import { patchFailedParagraph, upgradeFailedPlaceholders } from '@/app/_lib/editor/patchTranscript';
 import {
   audioKindOf,
@@ -38,6 +38,7 @@ import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
 import { readWorkspaceState, tabOfMeta, writeWorkspaceState, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
+import { AUTO_SOURCE, pairLabel } from '@/app/_lib/translation/languages';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { Editor } from '../Editor/Editor';
 import { LayoutPanel } from '../LayoutPanel/LayoutPanel';
@@ -118,6 +119,14 @@ const outcomesToChunks = (outcomes: ReadonlyMap<number, ChunkOutcome>): StoredCh
       status: outcome.kind === 'ok' ? 'ok' : 'failed',
     }));
 
+const blockLanguagesOf = (project: Project | null): BlockLanguages | undefined =>
+  project?.translation
+    ? {
+        source: project.translation.sourceLanguage === AUTO_SOURCE ? null : project.translation.sourceLanguage,
+        target: project.translation.targetLanguage,
+      }
+    : undefined;
+
 const EMPTY_DOC: TiptapDoc = { type: 'doc', content: [{ type: 'paragraph' }] };
 /** 녹음 노트의 문단 길이 상한 — 이 안쪽의 연속 조각은 한 문단으로 합친다 */
 const LIVE_PARAGRAPH_MS = 25_000;
@@ -162,6 +171,7 @@ export const TranscribeWorkspace = () => {
   const [currentDoc, setCurrentDoc] = useState<TiptapDoc | null>(null);
   const [currentMs, setCurrentMs] = useState(0);
   const [showTimestamps, setShowTimestamps] = useState(true);
+  const [showSource, setShowSource] = useState(true);
   const [projects, setProjects] = useState<ProjectMeta[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [retryDone, setRetryDone] = useState(0);
@@ -233,8 +243,7 @@ export const TranscribeWorkspace = () => {
   // 조립 결과 → 에디터 + 진행 토스트 (새 인식 중에만)
   useEffect(() => {
     if (mode !== 'new' || (phase !== 'transcribing' && phase !== 'splitting' && phase !== 'recording')) return;
-    const doc = blocksToTiptapDoc(assembled.blocks);
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    const doc = blocksToTiptapDoc(assembled.blocks, blockLanguagesOf(activeRef.current));
     setEditorValue(doc);
     setDoc(doc);
     if (phase === 'transcribing' && engineKind === 'byok') {
@@ -261,7 +270,7 @@ export const TranscribeWorkspace = () => {
   // 새 인식이 전부 끝나면 노트로 저장하고 검수 단계로
   useEffect(() => {
     if (mode !== 'new' || phase !== 'transcribing' || !assembled.complete) return;
-    const doc = docRef.current ?? blocksToTiptapDoc(assembled.blocks);
+    const doc = docRef.current ?? blocksToTiptapDoc(assembled.blocks, blockLanguagesOf(activeRef.current));
     const chunks = outcomesToChunks(outcomes);
     const now = Date.now();
     const audio = pendingAudioRef.current;
@@ -275,6 +284,7 @@ export const TranscribeWorkspace = () => {
       splitOptions: isRecording ? null : splitOptionsRef.current,
       chunks,
       doc,
+      translation: activeRef.current?.translation,
     };
     setActive(project);
     persist(project);
@@ -1227,6 +1237,7 @@ export const TranscribeWorkspace = () => {
           : `인식 ${assembled.readyCount}/${expectedCount ?? '…'}`
         : null;
   const editorStatus = phase === 'review' ? '검수 중' : recording ? '녹음 중 · 편집 잠금' : busy ? '인식 중 · 편집 잠금' : '대기';
+  const noteTranslation = activeProject?.translation;
   const showEditor = editorValue !== null || phase !== 'idle';
   const pendingChunks = Math.max(0, live.chunkCount - outcomes.size);
   const liveRow = recording
@@ -1300,6 +1311,9 @@ export const TranscribeWorkspace = () => {
                   layoutOpen={layoutOpen}
                   layoutDisabled={!activeProject}
                   onToggleLayout={() => setLayoutOpen((open) => !open)}
+                  showSource={showSource}
+                  onToggleSource={noteTranslation ? () => setShowSource((v) => !v) : null}
+                  noteLabel={noteTranslation ? `${pairLabel(noteTranslation.sourceLanguage, noteTranslation.targetLanguage)} 번역 노트` : undefined}
                 />
               ) : (
                 <div className={styles.empty}>

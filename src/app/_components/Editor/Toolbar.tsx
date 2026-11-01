@@ -12,6 +12,9 @@ type ToolbarProps = {
   layoutOpen: boolean;
   layoutDisabled: boolean;
   onToggleLayout: () => void;
+  showSource: boolean;
+  onToggleSource: (() => void) | null;
+  noteLabel?: string;
 };
 
 const BulletIcon = () => (
@@ -54,6 +57,9 @@ export const Toolbar = ({
   layoutOpen,
   layoutDisabled,
   onToggleLayout,
+  showSource,
+  onToggleSource,
+  noteLabel,
 }: ToolbarProps) => {
   const state = useEditorState({
     editor,
@@ -145,8 +151,23 @@ export const Toolbar = ({
           <ClockIcon />
           <span className={styles.toolLabel}>타임스탬프</span>
         </button>
+        {onToggleSource ? (
+          <>
+            <span className={styles.separator} />
+            <button
+              type="button"
+              className={showSource ? styles.tool : styles.toolActive}
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={onToggleSource}
+              aria-pressed={!showSource}
+            >
+              <span className={styles.toolLabel}>원문 숨기기</span>
+            </button>
+          </>
+        ) : null}
       </div>
       <div className={styles.toolbarMeta}>
+        {noteLabel ? <span className={styles.noteLabel}>{noteLabel}</span> : null}
         <button
           type="button"
           className={layoutOpen ? styles.toolActive : styles.tool}

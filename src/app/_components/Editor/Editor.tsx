@@ -9,6 +9,7 @@ import styles from './Editor.module.css';
 import { FailedChunkNode, RETRY_EVENT, type RetryEventDetail } from './FailedChunkNode';
 import { SEEK_EVENT, TimestampNode, type SeekEventDetail } from './TimestampNode';
 import { Toolbar } from './Toolbar';
+import { TranscriptRole } from './TranscriptRole';
 
 export type EditorProps = {
   value: TiptapDoc | null;
@@ -25,6 +26,10 @@ export type EditorProps = {
   layoutOpen: boolean;
   layoutDisabled: boolean;
   onToggleLayout: () => void;
+  showSource?: boolean;
+  /** 번역 노트만 준다. null 이면 원문 숨기기 버튼이 없다 */
+  onToggleSource?: (() => void) | null;
+  noteLabel?: string;
 };
 
 export const Editor = ({
@@ -41,6 +46,9 @@ export const Editor = ({
   layoutOpen,
   layoutDisabled,
   onToggleLayout,
+  showSource = true,
+  onToggleSource = null,
+  noteLabel,
 }: EditorProps) => {
   const rootRef = useRef<HTMLDivElement>(null);
 
@@ -61,6 +69,7 @@ export const Editor = ({
       }),
       TimestampNode,
       FailedChunkNode,
+      TranscriptRole,
     ],
     [],
   );
@@ -119,7 +128,10 @@ export const Editor = ({
   if (!editor) return <div className={styles.placeholder}>에디터 준비 중…</div>;
 
   return (
-    <div ref={rootRef} className={showTimestamps ? styles.editor : `${styles.editor} ${styles.hideTimestamps}`}>
+    <div
+      ref={rootRef}
+      className={`${styles.editor}${showTimestamps ? '' : ` ${styles.hideTimestamps}`}${showSource ? '' : ` ${styles.hideSource}`}`}
+    >
       <Toolbar
         editor={editor}
         showTimestamps={showTimestamps}
@@ -128,6 +140,9 @@ export const Editor = ({
         layoutOpen={layoutOpen}
         layoutDisabled={layoutDisabled}
         onToggleLayout={onToggleLayout}
+        showSource={showSource}
+        onToggleSource={onToggleSource}
+        noteLabel={noteLabel}
       />
       <div className={styles.divider} />
       <div className={styles.scroll}>
