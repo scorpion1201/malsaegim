@@ -36,6 +36,7 @@ import { startLiveRecognizer, type LiveRecognizer, type LiveRecognizerHandlers }
 import { ASR_LANGUAGE, isRealtimeTarget } from '@/app/_lib/asr/directTranscribe';
 import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
 import { isByokComplete, readByokSettings } from '@/app/_lib/settings/byokSettings';
+import { readWorkspaceState, tabOfMeta, writeWorkspaceState, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { Editor } from '../Editor/Editor';
@@ -167,6 +168,11 @@ export const TranscribeWorkspace = () => {
   const [retryTotal, setRetryTotal] = useState(0);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [layoutOpen, setLayoutOpen] = useState(false);
+  const [tab, setTab] = useState<WorkspaceTab>('transcribe');
+  /** 첫 진입에서 저장된 탭을 읽기 전에는 탭 상태를 저장하지 않는다 */
+  const [hydrated, setHydrated] = useState(false);
+  /** 저장하고 이동을 고른 뒤 저장이 끝나면 옮겨 갈 탭 */
+  const pendingTabRef = useRef<WorkspaceTab | null>(null);
 
   const playerRef = useRef<PlayerBarHandle>(null);
   const sidebarRef = useRef<SidebarHandle>(null);
@@ -179,6 +185,7 @@ export const TranscribeWorkspace = () => {
   /** 새 파일 노트의 id — 원본 Blob 을 인식이 끝나기 전에 IndexedDB 에 넣어야 해서 미리 정한다 */
   const pendingIdRef = useRef<string | null>(null);
   const stoppingRef = useRef(false);
+  const stopRecordingRef = useRef<() => void>(() => {});
   /** 이번 새 노트 인식에 쓴 분할 옵션 — 엔진에 따라 다르다 (노트에 참고용으로 저장) */
   const splitOptionsRef = useRef<SplitOptions>(DEFAULT_SPLIT_OPTIONS);
 
@@ -294,8 +301,14 @@ export const TranscribeWorkspace = () => {
     const metas = listProjects(window.localStorage);
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setProjects(metas);
-    if (metas.length > 0) {
-      const recent = loadProject(window.localStorage, metas[0].id);
+    const workspace = readWorkspaceState();
+    setTab(workspace.tab);
+    setHydrated(true);
+    const inTab = metas.filter((meta) => tabOfMeta(meta) === workspace.tab);
+    const lastId = workspace.lastNote[workspace.tab];
+    const target = inTab.find((meta) => meta.id === lastId) ?? inTab[0];
+    if (target) {
+      const recent = loadProject(window.localStorage, target.id);
       if (recent) {
         const doc = upgradeFailedPlaceholders(recent.doc, failedChunksOf(recent));
         setActive({ ...recent, doc });
@@ -311,6 +324,14 @@ export const TranscribeWorkspace = () => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 탭과 탭별 마지막 노트를 기억한다 — 진행 중 이동이 없으므로 열린 노트는 언제나 현재 탭의 노트다
+  useEffect(() => {
+    if (!hydrated) return;
+    const state = readWorkspaceState();
+    const id = activeProject?.id;
+    writeWorkspaceState({ tab, lastNote: id ? { ...state.lastNote, [tab]: id } : state.lastNote });
+  }, [hydrated, tab, activeProject?.id]);
 
   // 검수 단계 자동 저장 (500ms 디바운스)
   useEffect(() => {
@@ -746,6 +767,7 @@ export const TranscribeWorkspace = () => {
       if (!project) return;
       stop();
       pendingRetryRef.current = null;
+      setTab(tabOfMeta(toMeta(project)));
       const doc = upgradeFailedPlaceholders(project.doc, failedChunksOf(project));
       setMode('new');
       setActive({ ...project, doc });
@@ -761,6 +783,30 @@ export const TranscribeWorkspace = () => {
       attachAudio({ ...project, doc });
     },
     [stop, setActive, setDoc, attachAudio],
+  );
+
+  /** 디바운스 대기 중인 자동 저장을 바로 반영한다 */
+  const flushAutosave = useCallback(() => {
+    const active = activeRef.current;
+    const doc = docRef.current;
+    if (phase !== 'review' || !active || !doc) return;
+    if (active.doc === doc && active.title === title) return;
+    const updated: Project = { ...active, title, doc, updatedAt: Date.now() };
+    setActive(updated);
+    persist(updated);
+  }, [phase, title, setActive, persist]);
+
+  /** 그 탭의 마지막 노트 → 최신 노트 → 빈 화면 순으로 연다 */
+  const moveToTab = useCallback(
+    (next: WorkspaceTab) => {
+      const metas = listProjects(window.localStorage).filter((meta) => tabOfMeta(meta) === next);
+      const lastId = readWorkspaceState().lastNote[next];
+      const target = metas.find((meta) => meta.id === lastId) ?? metas[0];
+      setTab(next);
+      if (target) openProject(target.id);
+      else resetWorkspace();
+    },
+    [openProject, resetWorkspace],
   );
 
   const removeProject = useCallback(
@@ -885,6 +931,32 @@ export const TranscribeWorkspace = () => {
     setCurrentMs(0);
     setPhase('review');
   }, [phase, stop, setActive, persist, setDoc]);
+
+  const locked = phase === 'splitting' || phase === 'transcribing';
+
+  const switchTab = useCallback(
+    (next: WorkspaceTab) => {
+      if (next === tab || locked) return;
+      if (phase === 'recording') {
+        void dialog
+          .confirm({
+            title: '녹음을 저장하고 이동할까요?',
+            confirmLabel: '저장하고 이동',
+            cancelLabel: '계속 녹음',
+            defaultAction: 'cancel',
+          })
+          .then((proceed) => {
+            if (!proceed) return;
+            pendingTabRef.current = next;
+            stopRecordingRef.current();
+          });
+        return;
+      }
+      flushAutosave();
+      moveToTab(next);
+    },
+    [tab, locked, phase, dialog, flushAutosave, moveToTab],
+  );
 
   /** 녹음 시작: 엔진을 확보하고(On-Device 면 sherpa 워커까지 띄운 뒤) 빈 녹음 노트를 만들고 마이크를 연다 (권한 거부 시 노트는 지운다) */
   const startRecording = useCallback(() => {
@@ -1014,6 +1086,19 @@ export const TranscribeWorkspace = () => {
       });
   }, [phase, live, failWith, toast]);
 
+  useEffect(() => {
+    stopRecordingRef.current = stopRecording;
+  }, [stopRecording]);
+
+  // 저장하고 이동: 노트가 확정되면 기다리던 탭으로 옮긴다
+  useEffect(() => {
+    if (phase === 'error') pendingTabRef.current = null;
+    if (phase !== 'review' || !pendingTabRef.current) return;
+    const next = pendingTabRef.current;
+    pendingTabRef.current = null;
+    moveToTab(next);
+  }, [phase, moveToTab]);
+
   // 녹음 중 자동 저장: 조각 결과가 올 때마다(1초 디바운스) 본문·조각·길이를 노트에 반영한다
   useEffect(() => {
     if (phase !== 'recording') return;
@@ -1129,6 +1214,7 @@ export const TranscribeWorkspace = () => {
     [exportDoc, title, layout],
   );
 
+  const tabProjects = useMemo(() => projects.filter((meta) => tabOfMeta(meta) === tab), [projects, tab]);
   const recording = phase === 'recording';
   const busy = phase === 'splitting' || phase === 'transcribing' || recording;
   const topStatus = recording
@@ -1164,12 +1250,13 @@ export const TranscribeWorkspace = () => {
 
   return (
     <div className={styles.shell}>
-      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} />
+      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} navLocked={recording} />
 
       <div className={styles.frame}>
         <Sidebar
           ref={sidebarRef}
-          projects={projects}
+          tab={tab}
+          projects={tabProjects}
           activeId={activeProject?.id ?? null}
           disabled={busy}
           recording={recording}
@@ -1185,7 +1272,15 @@ export const TranscribeWorkspace = () => {
           onDelete={removeProject}
         />
 
-        <TabRow savedAt={phase === 'review' ? savedAt : null} exportDisabled={phase !== 'review' || !currentDoc} onExport={exportDocument} />
+        <TabRow
+          tab={tab}
+          running={recording ? { tab, muted: live.status === 'paused' } : null}
+          locked={locked}
+          onSelect={switchTab}
+          savedAt={phase === 'review' ? savedAt : null}
+          exportDisabled={phase !== 'review' || !currentDoc}
+          onExport={exportDocument}
+        />
 
         <div className={styles.sheet}>
           <main className={styles.main}>
@@ -1208,8 +1303,17 @@ export const TranscribeWorkspace = () => {
                 />
               ) : (
                 <div className={styles.empty}>
-                  <span className={styles.emptyTitle}>오디오를 불러오거나 녹음을 시작하세요</span>
-                  <span>오디오를 선택하거나 마이크로 녹음하면 인식이 시작되고, 결과는 이 브라우저에 노트로 저장됩니다.</span>
+                  {tab === 'translate' ? (
+                    <>
+                      <span className={styles.emptyTitle}>새 번역을 시작하세요</span>
+                      <span>왼쪽의 새 번역을 누르면 언어를 고르고 시작합니다. 저장된 번역 노트는 목록에서 열 수 있습니다.</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className={styles.emptyTitle}>오디오를 불러오거나 녹음을 시작하세요</span>
+                      <span>오디오를 선택하거나 마이크로 녹음하면 인식이 시작되고, 결과는 이 브라우저에 노트로 저장됩니다.</span>
+                    </>
+                  )}
                 </div>
               )}
             </div>

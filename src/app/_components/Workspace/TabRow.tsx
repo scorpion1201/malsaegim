@@ -2,14 +2,25 @@
 
 import { useEffect, useState } from 'react';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
+import { TAB_LABEL, type WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import styles from './Workspace.module.css';
 
 type TabRowProps = {
+  tab: WorkspaceTab;
+  /** 녹음·번역이 진행 중인 탭 — muted 는 일시정지와 마무리 중 */
+  running: { tab: WorkspaceTab; muted: boolean } | null;
+  locked: boolean;
+  onSelect: (tab: WorkspaceTab) => void;
   /** 마지막 자동 저장 시각 (없으면 표시 안 함) */
   savedAt: number | null;
   exportDisabled: boolean;
   onExport: (format: ExportFormat) => Promise<void>;
 };
+
+const TAB_WIDTH: Record<WorkspaceTab, number> = { transcribe: 96, translate: 116 };
+const TABS: WorkspaceTab[] = ['transcribe', 'translate'];
+/** 받아쓰기 96px + 간격 4px */
+const TRANSLATE_OFFSET = 100;
 
 const relative = (savedAt: number, now: number): string => {
   const seconds = Math.max(0, Math.round((now - savedAt) / 1000));
@@ -20,7 +31,7 @@ const relative = (savedAt: number, now: number): string => {
   return `${Math.floor(minutes / 60)}시간 전`;
 };
 
-export const TabRow = ({ savedAt, exportDisabled, onExport }: TabRowProps) => {
+export const TabRow = ({ tab, running, locked, onSelect, savedAt, exportDisabled, onExport }: TabRowProps) => {
   const [now, setNow] = useState(() => Date.now());
   const [busy, setBusy] = useState<ExportFormat | null>(null);
 
@@ -41,10 +52,29 @@ export const TabRow = ({ savedAt, exportDisabled, onExport }: TabRowProps) => {
   return (
     <div className={styles.tabRow}>
       <nav className={styles.tabs} aria-label="기능">
-        <span className={styles.tabIndicator} style={{ width: 96 }} aria-hidden="true" />
-        <button type="button" className={styles.tabActive} style={{ width: 96 }} aria-current="page">
-          받아쓰기
-        </button>
+        <span
+          className={styles.tabIndicator}
+          style={{ width: TAB_WIDTH[tab], transform: `translateX(${tab === 'translate' ? TRANSLATE_OFFSET : 0}px)` }}
+          aria-hidden="true"
+        />
+        {TABS.map((item) => (
+          <button
+            key={item}
+            type="button"
+            className={item === tab ? styles.tabActive : styles.tab}
+            style={{ width: TAB_WIDTH[item] }}
+            aria-current={item === tab ? 'page' : undefined}
+            aria-disabled={locked || undefined}
+            onClick={() => onSelect(item)}
+          >
+            {TAB_LABEL[item]}
+            {running?.tab === item ? (
+              <span className={running.muted ? styles.tabDotMuted : styles.tabDot}>
+                <span className={styles.srOnly}>진행 중</span>
+              </span>
+            ) : null}
+          </button>
+        ))}
       </nav>
       <div className={styles.saveGroup}>
         {savedAt !== null ? (

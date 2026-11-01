@@ -16,6 +16,8 @@ export type RecordingBarProps = {
 
 /** 글을 입력 중이거나 버튼에 포커스가 있으면 단축키를 가로채지 않는다 */
 const shouldIgnoreKey = (target: EventTarget | null): boolean => {
+  // 열린 다이얼로그의 Esc 가 녹음을 멈추면 안 된다
+  if (document.querySelector('[aria-modal="true"]')) return true;
   if (!(target instanceof HTMLElement)) return false;
   const tag = target.tagName;
   return (

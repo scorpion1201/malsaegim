@@ -12,6 +12,8 @@ export type ConfirmOptions = {
   warning?: string;
   confirmLabel?: string;
   cancelLabel?: string;
+  /** Enter 와 첫 포커스가 향하는 쪽. 진행 중인 일을 끝내는 확인은 'cancel' 로 둔다 */
+  defaultAction?: 'confirm' | 'cancel';
 };
 
 type DialogApi = {
@@ -38,6 +40,7 @@ const WarnIcon = () => (
 export const DialogProvider = ({ children }: { children: ReactNode }) => {
   const [pending, setPending] = useState<Pending | null>(null);
   const confirmRef = useRef<HTMLButtonElement>(null);
+  const cancelRef = useRef<HTMLButtonElement>(null);
 
   const confirm = useCallback(
     (options: ConfirmOptions) =>
@@ -58,17 +61,18 @@ export const DialogProvider = ({ children }: { children: ReactNode }) => {
     });
   }, []);
 
-  // Esc = 취소, Enter = 확인. 열리면 확인 버튼에 포커스
+  // Esc = 취소, Enter = 기본 동작. 열리면 기본 동작 버튼에 포커스
   useEffect(() => {
     if (!pending) return;
-    confirmRef.current?.focus();
+    const cancelFirst = pending.options.defaultAction === 'cancel';
+    (cancelFirst ? cancelRef : confirmRef).current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         event.preventDefault();
         settle(false);
       } else if (event.key === 'Enter') {
         event.preventDefault();
-        settle(true);
+        settle(!cancelFirst);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -102,7 +106,7 @@ export const DialogProvider = ({ children }: { children: ReactNode }) => {
               </div>
             </div>
             <div className={styles.actions}>
-              <button type="button" className={styles.cancel} onClick={() => settle(false)}>
+              <button ref={cancelRef} type="button" className={styles.cancel} onClick={() => settle(false)}>
                 {options.cancelLabel ?? '취소'}
               </button>
               <button

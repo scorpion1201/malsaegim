@@ -11,9 +11,11 @@ type TopBarProps = {
   /** 열린 노트가 없으면(목록이 비었거나 아무것도 선택하지 않음) 제목 입력란을 숨긴다 */
   titleVisible: boolean;
   onTitleChange: (title: string) => void;
+  /** 진행 중에는 설정으로 나갈 수 없다 */
+  navLocked: boolean;
 };
 
-export const TopBar = ({ title, titleVisible, onTitleChange }: TopBarProps) => (
+export const TopBar = ({ title, titleVisible, onTitleChange, navLocked }: TopBarProps) => (
   <header className={styles.topBar}>
     <div className={styles.topLeft}>
       <Link href="/" className={styles.logo} draggable={false} aria-label="말새김 홈">
@@ -45,9 +47,21 @@ export const TopBar = ({ title, titleVisible, onTitleChange }: TopBarProps) => (
       <div className={styles.themeSlot}>
         <ThemeToggle />
       </div>
-      <Link href="/settings" className={styles.gearButton} aria-label="설정" data-tooltip="설정">
-        <GearIcon />
-      </Link>
+      {navLocked ? (
+        <button
+          type="button"
+          className={`${styles.gearButton} ${styles.gearButtonLocked}`}
+          aria-label="설정"
+          aria-disabled="true"
+          data-tooltip="녹음을 끝낸 뒤 열 수 있습니다"
+        >
+          <GearIcon />
+        </button>
+      ) : (
+        <Link href="/settings" className={styles.gearButton} aria-label="설정" data-tooltip="설정">
+          <GearIcon />
+        </Link>
+      )}
     </div>
   </header>
 );

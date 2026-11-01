@@ -3,6 +3,7 @@
 import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react';
 import type { ProjectMeta } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
+import type { WorkspaceTab } from '@/app/_lib/settings/workspaceState';
 import { formatDateTime, formatTimestamp } from '@/app/_lib/time';
 import { Menu, type MenuItem } from '../Menu/Menu';
 import styles from './Workspace.module.css';
@@ -12,6 +13,7 @@ export type SidebarHandle = {
 };
 
 type SidebarProps = {
+  tab: WorkspaceTab;
   projects: ProjectMeta[];
   activeId: string | null;
   /** 분할·인식·녹음 중에는 불러오기/열기/메뉴를 막는다 (녹음 토글은 예외) */
@@ -134,6 +136,7 @@ const TrashIcon = () => (
 export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
   (
     {
+      tab,
       projects,
       activeId,
       disabled,
@@ -279,11 +282,15 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
           </button>
         </div>
 
-        <div className={styles.sectionLabel}>노트</div>
+        <div className={styles.sectionLabel}>{tab === 'translate' ? '번역 노트' : '노트'}</div>
 
         <div className={styles.projectList}>
           {projects.length === 0 ? (
-            <p className={styles.projectEmpty}>저장된 노트가 없습니다. 오디오를 불러오거나 녹음을 시작하면 새 노트가 생깁니다.</p>
+            <p className={styles.projectEmpty}>
+              {tab === 'translate'
+                ? '저장된 번역 노트가 없습니다. 새 번역을 시작하면 번역 노트가 생깁니다.'
+                : '저장된 노트가 없습니다. 오디오를 불러오거나 녹음을 시작하면 새 노트가 생깁니다.'}
+            </p>
           ) : (
             projects.map((project) => {
               const active = project.id === activeId;

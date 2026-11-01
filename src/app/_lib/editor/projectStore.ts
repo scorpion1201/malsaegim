@@ -1,6 +1,7 @@
 import type { SplitOptions } from '@/app/_lib/audio/types';
 import type { PageLayout } from '@/app/_lib/hwp/pageLayout';
 import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
+import { isValidNoteDoc, isValidTranslationInfo } from './noteSchema';
 
 export type ChunkStatus = 'ok' | 'failed';
 
@@ -36,6 +37,8 @@ export type Project = {
   doc: TiptapDoc;
   /** 문서 레이아웃 — 없으면 기본 편집 용지(A4 세로). 내보낼 때 normalizePageLayout 으로 메운다 */
   layout?: PageLayout;
+  /** 번역 노트 — sourceLanguage 는 코드 또는 'auto' */
+  translation?: { sourceLanguage: string; targetLanguage: string; model: 'gpt-realtime-translate' };
 };
 
 export type ProjectMeta = {
@@ -48,11 +51,16 @@ export type ProjectMeta = {
   /** 예전 목록 항목에는 없을 수 있다 — 없으면 'file' 로 본다 */
   kind?: 'file' | 'recording' | 'text';
   durationMs?: number | null;
+  sourceLanguage?: string;
+  /** 있으면 번역 노트 */
+  targetLanguage?: string;
 };
 
 export type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 const INDEX_KEY = 'malsaegim:projects';
+/** 가져올 노트 파일의 크기 상한 — 파일을 읽은 문자열 길이 기준 */
+const MAX_IMPORT_LENGTH = 20_000_000;
 const LEGACY_DRAFT_KEY = 'malsaegim:draft';
 const projectKey = (id: string): string => `malsaegim:project:${id}`;
 
@@ -95,6 +103,8 @@ export const toMeta = (project: Project): ProjectMeta => ({
   audioName: project.audio?.name ?? null,
   kind: audioKindOf(project.audio),
   durationMs: project.audio?.durationMs ?? null,
+  sourceLanguage: project.translation?.sourceLanguage,
+  targetLanguage: project.translation?.targetLanguage,
 });
 
 const readIndex = (storage: StorageLike): ProjectMeta[] => {
@@ -187,8 +197,9 @@ export const serializeProject = (project: Project): string => JSON.stringify(pro
 /** 가져오기: 검증 후 새 id 로 복제 (파일 출처와 무관하게 로컬 목록에서 유일하게) */
 export const parseProjectFile = (text: string, now: number): Project | null => {
   try {
+    if (text.length > MAX_IMPORT_LENGTH) return null;
     const parsed: unknown = JSON.parse(text);
-    if (!isProject(parsed)) return null;
+    if (!isProject(parsed) || !isValidNoteDoc(parsed.doc) || !isValidTranslationInfo(parsed.translation)) return null;
     return { ...parsed, id: newProjectId(), updatedAt: now };
   } catch {
     return null;
