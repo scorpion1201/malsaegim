@@ -17,8 +17,9 @@ const SUBTITLE: Record<Exclude<ModelStatus, 'unavailable'>, string> = {
 
 const DEVICE_LABEL: Record<DeviceKind, string> = { desktop: 'PC', ipad: 'iPad', mobile: '모바일' };
 
-const describeModel = (model: WhisperModel): string =>
-  `${model.quant.toUpperCase()} · 약 ${formatMb(model.file.bytes)} MB · 실행 메모리 약 ${(model.memoryMB / 1024).toFixed(1)} GB${
+/** 내려받는 크기는 위 상태 줄과 같게 엔진 런타임을 더한 값으로 보여 준다 */
+const describeModel = (model: WhisperModel, runtimeBytes: number): string =>
+  `${model.quant.toUpperCase()} · 내려받기 약 ${formatMb(model.file.bytes + runtimeBytes)} MB · 실행 메모리 약 ${(model.memoryMB / 1024).toFixed(1)} GB${
     model.tier === 'full' ? ' · 한국어 정확도 우선' : ' · 메모리가 적은 기기용'
   }`;
 
@@ -31,6 +32,7 @@ export const OnDeviceModelCard = () => {
   const name = model.selected ? `${model.selected.label} (${model.selected.quant.toUpperCase()})` : '한국어 On-Device 모델';
   const deviceLabel = model.device ? DEVICE_LABEL[model.device.kind] : null;
   const gpu = useSyncExternalStore(subscribeGpuPreference, readGpuPreference, () => true);
+  const runtimeBytes = model.manifest?.runtime.files.reduce((sum, file) => sum + file.bytes, 0) ?? 0;
 
   const remove = async () => {
     const ok = await dialog.confirm({
@@ -146,7 +148,7 @@ export const OnDeviceModelCard = () => {
               <input type="radio" name="ondevice-model" checked={model.choice === entry.id} onChange={() => void choose(entry.id)} />
               <span className={styles.modelChoiceText}>
                 <span className={styles.modelChoiceName}>{entry.label}</span>
-                <span className={styles.modelChoiceSub}>{describeModel(entry)}</span>
+                <span className={styles.modelChoiceSub}>{describeModel(entry, runtimeBytes)}</span>
               </span>
             </label>
           ))}
