@@ -50,13 +50,12 @@ const RECONNECT_DELAYS_MS = [1000, 3000, 8000];
 const STABLE_RESET_MS = 60_000;
 const HANDOFF_BEFORE_MS = 120_000;
 const HANDOFF_FORCE_MS = 10_000;
-const DRAIN_IDLE_MS = 2500;
 const FINISH_TIMEOUT_MS = 15_000;
 const DELAY_AFTER_MS = 5000;
 const TICK_MS = 500;
 const READY_TIMEOUT_MS = 15_000;
 /** 물러난 세션이 session.closed 를 내고 남은 번역을 흘려보낼 시간 */
-const RETIRE_MS = 6000;
+const RETIRE_MS = 10_000;
 
 const MIC_ERRORS = new Set(['NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'SecurityError']);
 
@@ -112,7 +111,6 @@ export const startTranslationRecognizer = async (
   let gapStartMs: number | null = null;
   let lastInputMs = 0;
   let lastOutputMs = 0;
-  let lastDeltaMs = 0;
   let delayed = false;
   let parkTimer: ReturnType<typeof setTimeout> | null = null;
   let stableTimer: ReturnType<typeof setTimeout> | null = null;
@@ -194,7 +192,6 @@ export const startTranslationRecognizer = async (
   const onDelta = (target: Connection, stream: SegmentStream, event: TranslationServerEvent) => {
     const text = event.delta ?? '';
     const now = performance.now();
-    lastDeltaMs = now;
     const shift = stream === 'output' ? OUTPUT_SHIFT_MS : 0;
     const elapsed = event.elapsed_ms;
     const wallMs = typeof elapsed === 'number' && target.startWallMs !== null ? target.startWallMs + elapsed - shift : now;
@@ -432,21 +429,17 @@ export const startTranslationRecognizer = async (
         const current = connection;
         const done = () => {
           clearTimeout(limit);
-          clearInterval(idle);
           onSessionClosed = null;
           segmenter.flush();
           cleanup();
           resolve();
         };
         const limit = setTimeout(done, FINISH_TIMEOUT_MS);
-        const idle = setInterval(() => {
-          if (performance.now() - lastDeltaMs >= DRAIN_IDLE_MS) done();
-        }, TICK_MS);
         if (!current) {
           done();
           return;
         }
-        lastDeltaMs = performance.now();
+        // 남은 글은 session.closed 전에 온다 — 실측 4.6~5.8초. 상한은 15초
         onSessionClosed = done;
         current.call.setSendEnabled(false);
         current.call.requestClose();
