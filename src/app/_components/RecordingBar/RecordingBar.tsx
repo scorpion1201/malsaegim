@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, type RefObject } from 'react';
 import { formatTimestamp } from '@/app/_lib/time';
+import type { SpeakerView } from '@/app/_lib/translation/speaker';
 import styles from './RecordingBar.module.css';
 
 export type RecordingBarProps = {
@@ -12,7 +13,30 @@ export type RecordingBarProps = {
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
+  /** 번역 세션만 준다 */
+  speaker?: { view: SpeakerView; onToggle: () => void };
 };
+
+const SPEAKER_TEXT: Record<SpeakerView, { label: string; tooltip: string; announce: string }> = {
+  on: { label: '번역 음성', tooltip: '번역 음성 끄기', announce: '번역 음성을 켰습니다' },
+  off: { label: '음성 꺼짐', tooltip: '번역 음성 켜기', announce: '번역 음성을 껐습니다' },
+  blocked: { label: '소리 켜기', tooltip: '소리 켜기', announce: '브라우저가 소리를 막았습니다' },
+  fuse: { label: '에코로 꺼짐', tooltip: '번역 음성 켜기', announce: '에코가 감지되어 번역 음성을 껐습니다' },
+};
+
+const SPEAKER_CLASS: Record<SpeakerView, string> = {
+  on: styles.speakerOn,
+  off: styles.speakerOff,
+  blocked: styles.speakerBlocked,
+  fuse: styles.speakerOff,
+};
+
+const SpeakerIcon = ({ crossed }: { crossed: boolean }) => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M4 9v6h4l5 4V5L8 9H4z" />
+    {crossed ? <path d="M3 3l18 18" /> : <path d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" />}
+  </svg>
+);
 
 /** 글을 입력 중이거나 버튼에 포커스가 있으면 단축키를 가로채지 않는다 */
 const shouldIgnoreKey = (target: EventTarget | null): boolean => {
@@ -42,7 +66,7 @@ const levelToHeight = (rms: number): number => {
   return MIN_HEIGHT + (MAX_HEIGHT - MIN_HEIGHT) * ratio;
 };
 
-export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, onStop }: RecordingBarProps) => {
+export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, onStop, speaker }: RecordingBarProps) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // 파형: 트랙 너비를 3px 막대로 채우고, 최신 프레임이 오른쪽 끝에 오도록 그린다
@@ -90,6 +114,11 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
         else onPause();
         return;
       }
+      if (speaker && event.code === 'KeyM') {
+        event.preventDefault();
+        speaker.onToggle();
+        return;
+      }
       if (event.key === 'Escape') {
         event.preventDefault();
         onStop();
@@ -97,7 +126,7 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [paused, onPause, onResume, onStop]);
+  }, [paused, onPause, onResume, onStop, speaker]);
 
   return (
     <div className={styles.bar}>
@@ -119,10 +148,37 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
         {paused ? <span className={styles.pausedLabel}>일시정지</span> : null}
       </span>
       <canvas ref={canvasRef} className={styles.wave} aria-hidden="true" />
+      {speaker ? (
+        <>
+          <button
+            type="button"
+            className={`${styles.speaker} ${SPEAKER_CLASS[speaker.view]}`}
+            aria-label="번역 음성"
+            aria-pressed={speaker.view === 'on'}
+            data-tooltip={SPEAKER_TEXT[speaker.view].tooltip}
+            data-shortcut="M"
+            onClick={(event) => {
+              // 포커스를 남기면 M 과 Space 가 버튼에 먹힌다
+              event.currentTarget.blur();
+              speaker.onToggle();
+            }}
+          >
+            <SpeakerIcon crossed={speaker.view === 'off' || speaker.view === 'fuse'} />
+            <span>{SPEAKER_TEXT[speaker.view].label}</span>
+          </button>
+          <span role="status" className={styles.srOnly}>
+            {SPEAKER_TEXT[speaker.view].announce}
+          </span>
+        </>
+      ) : null}
       <button
         type="button"
         className={styles.quiet}
-        onClick={paused ? onResume : onPause}
+        onClick={(event) => {
+          event.currentTarget.blur();
+          if (paused) onResume();
+          else onPause();
+        }}
         data-tooltip={paused ? '녹음 계속' : '일시정지'}
         data-shortcut="Space"
       >
@@ -131,7 +187,7 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
       <button type="button" className={styles.save} onClick={onStop} data-tooltip="녹음을 마치고 노트로 저장">
         저장
       </button>
-      <span className={styles.hint}>Space 일시정지 · Esc 중지</span>
+      <span className={styles.hint}>{speaker ? 'Space 일시정지 · M 음성 · Esc 중지' : 'Space 일시정지 · Esc 중지'}</span>
     </div>
   );
 };
