@@ -1,9 +1,12 @@
 import { redirect } from 'next/navigation';
+import { connection } from 'next/server';
 import { readAuthConfig } from '@/app/_lib/auth/config';
 import { login } from './actions';
 import styles from './login.module.css';
 
 const LoginPage = async ({ searchParams }: PageProps<'/login'>) => {
+  // 비밀번호는 실행 환경 값이다 — 빌드 때 렌더링되면 로그인 꺼짐이 고정돼 리다이렉트가 반복된다
+  await connection();
   if (!readAuthConfig().enabled) redirect('/');
   const { error } = await searchParams;
   return (
