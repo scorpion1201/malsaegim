@@ -46,6 +46,7 @@ import { RecordingBar } from '../RecordingBar/RecordingBar';
 import { useDialog } from '../Dialog/DialogProvider';
 import { useToast } from '../Toast/ToastProvider';
 import { Sidebar, type SidebarHandle } from './Sidebar';
+import { TabRow } from './TabRow';
 import { TopBar } from './TopBar';
 import { useLiveRecording } from './useLiveRecording';
 import styles from './Workspace.module.css';
@@ -1163,18 +1164,9 @@ export const TranscribeWorkspace = () => {
 
   return (
     <div className={styles.shell}>
-      <TopBar
-        title={title}
-        titleVisible={activeProject !== null || busy}
-        onTitleChange={setTitle}
-        savedAt={phase === 'review' ? savedAt : null}
-        status={topStatus}
-        statusTone={recording ? 'live' : 'muted'}
-        exportDisabled={phase !== 'review' || !currentDoc}
-        onExport={exportDocument}
-      />
+      <TopBar title={title} titleVisible={activeProject !== null || busy} onTitleChange={setTitle} />
 
-      <div className={styles.body}>
+      <div className={styles.frame}>
         <Sidebar
           ref={sidebarRef}
           projects={projects}
@@ -1193,52 +1185,56 @@ export const TranscribeWorkspace = () => {
           onDelete={removeProject}
         />
 
-        <main className={styles.main}>
-          <div className={styles.editorColumn}>
-            {showEditor ? (
-              <Editor
-                value={editorValue}
-                editable={phase === 'review'}
-                showTimestamps={showTimestamps}
-                currentMs={currentMs}
-                statusLabel={editorStatus}
-                onChange={setDoc}
-                onSeek={(ms) => playerRef.current?.seekTo(ms)}
-                onRetryChunk={retryChunk}
-                onToggleTimestamps={() => setShowTimestamps((v) => !v)}
-                live={liveRow}
-                layoutOpen={layoutOpen}
-                layoutDisabled={!activeProject}
-                onToggleLayout={() => setLayoutOpen((open) => !open)}
-              />
-            ) : (
-              <div className={styles.empty}>
-                <span className={styles.emptyTitle}>오디오를 불러오거나 녹음을 시작하세요</span>
-                <span>오디오를 선택하거나 마이크로 녹음하면 인식이 시작되고, 결과는 이 브라우저에 노트로 저장됩니다.</span>
-              </div>
-            )}
-          </div>
-          <LayoutPanel
-            open={layoutOpen && activeProject !== null && showEditor}
-            layout={layout}
-            onChange={updateLayout}
-            onClose={() => setLayoutOpen(false)}
-          />
-        </main>
-      </div>
+        <TabRow savedAt={phase === 'review' ? savedAt : null} exportDisabled={phase !== 'review' || !currentDoc} onExport={exportDocument} />
 
-      {recording ? (
-        <RecordingBar
-          elapsedMs={live.elapsedMs}
-          paused={live.status === 'paused'}
-          levelsRef={live.levelsRef}
-          onPause={live.pause}
-          onResume={live.resume}
-          onStop={stopRecording}
-        />
-      ) : (
-        <PlayerBar ref={playerRef} source={source} durationMs={durationMs} onTimeUpdate={setCurrentMs} />
-      )}
+        <div className={styles.sheet}>
+          <main className={styles.main}>
+            <div className={styles.editorColumn}>
+              {showEditor ? (
+                <Editor
+                  value={editorValue}
+                  editable={phase === 'review'}
+                  showTimestamps={showTimestamps}
+                  currentMs={currentMs}
+                  statusLabel={topStatus ?? editorStatus}
+                  onChange={setDoc}
+                  onSeek={(ms) => playerRef.current?.seekTo(ms)}
+                  onRetryChunk={retryChunk}
+                  onToggleTimestamps={() => setShowTimestamps((v) => !v)}
+                  live={liveRow}
+                  layoutOpen={layoutOpen}
+                  layoutDisabled={!activeProject}
+                  onToggleLayout={() => setLayoutOpen((open) => !open)}
+                />
+              ) : (
+                <div className={styles.empty}>
+                  <span className={styles.emptyTitle}>오디오를 불러오거나 녹음을 시작하세요</span>
+                  <span>오디오를 선택하거나 마이크로 녹음하면 인식이 시작되고, 결과는 이 브라우저에 노트로 저장됩니다.</span>
+                </div>
+              )}
+            </div>
+            <LayoutPanel
+              open={layoutOpen && activeProject !== null && showEditor}
+              layout={layout}
+              onChange={updateLayout}
+              onClose={() => setLayoutOpen(false)}
+            />
+          </main>
+
+          {recording ? (
+            <RecordingBar
+              elapsedMs={live.elapsedMs}
+              paused={live.status === 'paused'}
+              levelsRef={live.levelsRef}
+              onPause={live.pause}
+              onResume={live.resume}
+              onStop={stopRecording}
+            />
+          ) : (
+            <PlayerBar ref={playerRef} source={source} durationMs={durationMs} onTimeUpdate={setCurrentMs} />
+          )}
+        </div>
+      </div>
     </div>
   );
 };

@@ -20,6 +20,10 @@
   --danger-soft: rgba(210, 72, 63, 0.12);
   --tooltip-bg: #1c1c1a;
   --tooltip-fg: #f6f6f4;
+  --warning: #a8660c;
+  --warning-soft: rgba(168, 102, 12, 0.14);
+  --side-btn: #ffffff;
+  --shadow: 0 1px 2px rgba(20, 20, 10, 0.04), 0 12px 32px -16px rgba(20, 20, 10, 0.14);
   --shadow-toast: 0 2px 6px rgba(20, 20, 10, 0.06), 0 12px 28px -10px rgba(20, 20, 10, 0.2);
   --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.18);
   --radius: 8px;
@@ -47,6 +51,10 @@
     --danger-soft: rgba(229, 103, 94, 0.16);
     --tooltip-bg: #ecece9;
     --tooltip-fg: #121213;
+    --warning: #e3ae5a;
+    --warning-soft: rgba(227, 174, 90, 0.16);
+    --side-btn: #242427;
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -16px rgba(0, 0, 0, 0.6);
     --shadow-toast: 0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 32px -10px rgba(0, 0, 0, 0.6);
     --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5);
     color-scheme: dark;
@@ -71,6 +79,10 @@
   --danger-soft: rgba(229, 103, 94, 0.16);
   --tooltip-bg: #ecece9;
   --tooltip-fg: #121213;
+  --warning: #e3ae5a;
+  --warning-soft: rgba(227, 174, 90, 0.16);
+  --side-btn: #242427;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px -16px rgba(0, 0, 0, 0.6);
   --shadow-toast: 0 2px 6px rgba(0, 0, 0, 0.4), 0 16px 32px -10px rgba(0, 0, 0, 0.6);
   --shadow-pop: 0 4px 12px rgba(0, 0, 0, 0.5);
   color-scheme: dark;

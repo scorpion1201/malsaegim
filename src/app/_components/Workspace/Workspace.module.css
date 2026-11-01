@@ -17,10 +17,15 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  position: relative;
   padding: 0 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  background: var(--bg);
   flex-shrink: 0;
+}
+
+/* 탭 줄이 없는 화면(설정)의 상단 바 */
+.topBarLined {
+  border-bottom: 1px solid var(--border);
 }
 
 .topLeft,
@@ -62,8 +67,20 @@
   -webkit-user-drag: none;
 }
 
+.titleSlot {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  height: 56px;
+  max-width: 360px;
+  display: flex;
+  align-items: center;
+  transform: translateX(-50%);
+}
+
 .titleField {
   display: flex;
+  min-width: 0;
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
@@ -86,34 +103,9 @@
   font-weight: 500;
   outline: none;
   min-width: 80px;
-}
-
-.status {
-  font-size: 12px;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.livePill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: var(--danger-soft);
-  color: var(--danger);
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.liveDot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--danger);
-  animation: pulse 1.2s ease-in-out infinite;
+  max-width: 100%;
+  text-align: center;
+  text-overflow: ellipsis;
 }
 
 .saved {
@@ -194,26 +186,130 @@
 
 /* ---------- 본문 ---------- */
 
-.body {
+/* 헤더, 탭 줄, 사이드바는 --bg 한 면이고 본문만 흰 시트로 뜬다 */
+.frame {
   flex: 1;
-  display: flex;
+  display: grid;
+  grid-template-columns: 256px minmax(0, 1fr);
+  grid-template-rows: 46px minmax(0, 1fr);
   min-height: 0;
+  padding: 0 12px 12px 0;
+}
+
+.sheet {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+/* ---------- 탭 줄 ---------- */
+
+.tabRow {
+  grid-column: 2;
+  grid-row: 1;
+  position: relative;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 0 8px 0 12px;
+}
+
+.tabs {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  align-self: flex-end;
+  gap: 4px;
+  height: 35px;
+}
+
+/* 활성 탭의 폴더 모양 — 아래쪽이 시트 윗선을 덮어 시트와 이어진다 */
+.tabIndicator {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 35px;
+  border: 1px solid var(--border);
+  border-bottom-color: var(--surface);
+  border-radius: 8px 8px 0 0;
+  background: var(--surface);
+  transition:
+    transform 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94),
+    width 220ms cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+.tab,
+.tabActive {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  font-size: 14px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tab {
+  color: var(--fg-2);
+  font-weight: 500;
+}
+
+.tabActive {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.tab:focus-visible,
+.tabActive:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.saveGroup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tabIndicator {
+    transition: none;
+  }
 }
 
 .sidebar {
-  width: 264px;
+  grid-column: 1;
+  grid-row: 1 / 3;
+  position: relative;
+  z-index: 4;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid var(--border);
-  background: var(--surface);
-  flex-shrink: 0;
+  min-height: 0;
+  background: var(--bg);
 }
 
 .sidebarTop {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
-  padding: 16px 16px 8px;
+  height: 46px;
+  padding: 11px 12px 0;
 }
 
 .hiddenInput {
@@ -236,7 +332,7 @@
   height: 38px;
   border-radius: var(--radius);
   overflow: hidden;
-  background: var(--surface-2);
+  background: var(--side-btn);
   color: var(--fg);
 }
 
@@ -338,7 +434,7 @@
 }
 
 .sectionLabel {
-  padding: 8px 16px 6px;
+  padding: 8px 12px 6px;
   font-size: 11px;
   font-weight: 500;
   letter-spacing: 0.04em;
@@ -350,7 +446,7 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  padding: 0 8px 12px;
+  padding: 0 12px 12px;
   overflow: auto;
 }
 
@@ -376,7 +472,8 @@
 }
 
 .projectRowActive {
-  background: var(--surface-2);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
 }
 
 .projectOpen {
@@ -482,7 +579,6 @@
   flex-direction: row;
   min-width: 0;
   min-height: 0;
-  background: var(--surface);
 }
 
 /* 에디터(또는 빈 화면) 칼럼 — 오른쪽 레이아웃 패널이 열리면 그만큼 좁아진다 */

@@ -111,7 +111,7 @@ export const SettingsPage = () => {
 
   return (
     <div className={styles.page}>
-      <header className={topStyles.topBar}>
+      <header className={`${topStyles.topBar} ${topStyles.topBarLined}`}>
         <div className={topStyles.topLeft}>
           <Link href="/" className={topStyles.logo} draggable={false} aria-label="말새김 홈">
             <Image src="/app-logo.png" alt="" width={44} height={44} priority draggable={false} className={topStyles.logoMark} />
