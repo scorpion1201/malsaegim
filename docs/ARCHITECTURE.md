@@ -68,7 +68,7 @@
 
 
 - **표기:** `/api/*` 는 서버, `User API` 와 `OpenAI Realtime API` 는 외부 서비스, 나머지는 브라우저 안의 구성 요소다.
-- **인식 경로:** 설정에 API 가 있으면 사용자 API(BYOK, 동시 8), 없으면 브라우저 안 whisper.cpp(동시 1)를 쓴다. 마이크 받아쓰기는 sherpa-onnx, BYOK 조각 큐, Realtime 세션 중 하나를 쓴다.
+- **인식 경로:** 설정에 API 가 있으면 사용자 API(BYOK, 동시 8), 없으면 브라우저 안 whisper.cpp(동시 1)를 쓴다. 마이크 받아쓰기는 On-Device whisper 반복 인식(파일 전사와 같은 모델·워커), BYOK 조각 큐, Realtime 세션 중 하나를 쓴다. On-Device 가 실패해도 음성을 API 로 보내지 않는다.
 - **번역 경로:** 미디어는 OpenAI 와 직결하고, 녹음, 조립, 노트 저장은 받아쓰기 경로를 그대로 탄다.
 - **경계:** 원본 오디오는 서버에 저장되지 않는다. 서버를 지나는 것은 BYOK 조각과 내보낼 문서 내용뿐이며, 둘 다 요청 처리 후 남지 않는다.
 
@@ -115,16 +115,15 @@
 
 - **위치:** `src/app/_lib/engine`, `src/app/_lib/asr/{asrEngine,selectEngine}.ts`, `src/app/_components/OnDevice`, `crates/engine`, `scripts/models`
 - **진입점:** 앱은 `malsaegimEngine.ts` 파사드 하나로만 접근한다.
-- **wasm 두 개:** 파일 전사는 `malsaegim-engine.{js,wasm}`(Rust 래퍼 + whisper.cpp, pthread), 실시간은 `malsaegim-engine-stream.{js,wasm}`(Rust 래퍼 + sherpa-onnx)이다. 스레드 모델이 달라 하나로 합치지 못한다.
-- **빌드:** Rust 가 얇은 C 심으로 C++ 를 FFI 하고 할루시네이션 정리와 디토크나이즈를 한다. 최종 링크는 emcc 가 한다. 자세한 내용은 [ENGINE.md](ENGINE.md) 에 있다.
-- **파일 전사 모델:** `seastar105/whisper-small-komixv2` 를 ggml q8_0 으로 변환했다(≈252 MB). wasm SIMD 경로가 있는 양자화 중 가장 정확하고 q5_1 보다 빠르다. k-quant 는 wasm 에서 로드되지 않는다.
-- **실시간 모델:** `sherpa-onnx-streaming-zipformer-korean-2024-06-16` int8(≈135 MB).
-- **실행 조건:** 전 페이지 COOP/COEP 로 교차 출처 격리를 켠다. whisper 는 pthread 풀(코어 수, 최대 8) + SIMD, sherpa 는 단일 스레드 SIMD 다. SIMD 나 격리가 없으면 `unavailable` 로 BYOK 만 쓴다.
-- **워커 수명:** 두 워커는 동시에 살지 않는다. 녹음을 시작하면 whisper 를 끝내고, whisper 는 5분 유휴 후 종료한다. 워커 크래시는 한 번 자동 재시작하고 시각을 이어 붙인다.
-- **워커 구조:** module 워커가 emscripten ES 모듈을 `import()` 로 읽어 모델을 FS 에 쓰고 `ccall` 로 Rust 함수를 부른다.
-- **파일 전사 흐름:** 진행률은 윈도우마다 갱신되고 토스트는 "인식 중 n%" 만 보여 준다(데스크톱 8스레드: 30초 윈도우 ≈ 8초).
-- **실시간 흐름:** 청커 시간축에 들어간 프레임을 그대로 sherpa 에 넣는다. 엔드포인트(2.4s/1.2s/20s)마다 확정 세그먼트가 outcomes 에 들어가 문단이 되고, 실시간 줄에는 부분 텍스트를 보여 준다.
-- **모델 내려받기 UX:** 사용자에게는 "한국어 On-Device 모델" 하나와 진행률 하나로 보인다. 첫 방문은 스플래시에서 자동으로 받고, "백그라운드에서 계속" 은 sessionStorage 에 기억한다. 우하단 플로팅 카드가 진행을 보여 주고, 설정 페이지 맨 위 카드에서 미리 받거나 지운다.
+- **런타임 두 벌:** `malsaegim-engine.{js,wasm}`(CPU, SIMD + pthread)과 `malsaegim-engine-webgpu.{js,wasm}`(ggml-webgpu, ASYNCIFY). WebGPU(shader-f16)를 먼저 쓰고 안 되면 CPU 로 돌린다. 파일 전사와 실시간이 같은 런타임·같은 모델을 쓴다.
+- **빌드:** Rust 가 얇은 C 심으로 C++ 를 FFI 하고 할루시네이션 정리를 한다. 최종 링크는 emcc 가 한다. 자세한 내용은 [ENGINE.md](ENGINE.md) 에 있다.
+- **모델:** whisper.cpp 공식 ggml 배포본(`ggerganov/whisper.cpp`, 리비전·sha256 고정). 기본은 large-v3-turbo Q8_0(874 MB, CPU wasm 힙 ≈ 1.67 GB), 메모리가 적은 모바일은 small Q8_0(264 MB, ≈ 1.0 GB). 기기 판별(`deviceProfile.ts`)이 기본값을 고르고 설정에서 바꿀 수 있다. 브라우저는 고른 모델 하나만 받는다. k-quant 는 wasm 에서 로드되지 않는다.
+- **실행 조건:** 전 페이지 COOP/COEP 로 교차 출처 격리를 켠다. CPU 런타임은 pthread 풀(코어 수, 최대 8) + SIMD 다. SIMD 나 격리가 없으면 `unavailable` 로 BYOK 만 쓴다.
+- **워커 수명:** whisper 워커 하나를 파일 전사와 실시간이 함께 쓴다(`whisperHost.ts`). 녹음 중에는 유지하고, 쓰지 않으면 5분 뒤 종료한다. 모델을 바꾸면 내린다. 녹음 중 워커가 죽으면 한 번 다시 띄우고 버퍼에 남은 오디오부터 이어서 인식한다.
+- **워커 구조:** module 워커가 emscripten ES 모듈을 `import()` 로 읽고, 캐시의 모델 Blob 을 WORKERFS 로 붙여(복사 없음) `ccall` 로 Rust 함수를 부른다. 요청은 하나씩 처리한다.
+- **파일 전사 흐름:** 진행률은 윈도우마다 갱신되고 토스트는 "인식 중 n%" 만 보여 준다. CPU wasm 의 30초 윈도우 인코더는 4코어 VM 에서 small ≈ 21초, Turbo ≈ 116초다(ENGINE.md).
+- **실시간 흐름:** 청커 시간축(저장 WAV 와 같은 샘플)의 프레임을 `liveSession.ts` 가 모아 창을 반복 인식한다. 두 번 연속 같은 앞부분 어절을 확정하고(LocalAgreement-2), 700ms 무음이면 발화를 모두 확정한다. 버퍼는 문장이 끝날 때만 자르고, 다시 나온 확정 부분은 글자 단위 정렬로 걷어 낸다. CPU 에서는 부분 자막만 인코더를 줄이고 확정 인식은 30초 전체 인코더로 돌린다(정확도 우선). 확정 문장은 outcomes 에 들어가 문단이 되고, 실시간 줄에는 미확정 텍스트를 보여 준다. 요청은 한 번에 하나라 느린 기기에서는 자막만 늦어진다("처리 지연").
+- **모델 내려받기 UX:** 사용자에게는 고른 모델 하나와 진행률 하나로 보인다. 첫 방문은 스플래시에서 자동으로 받고, "백그라운드에서 계속" 은 sessionStorage 에 기억한다. 우하단 플로팅 카드가 진행을 보여 주고, 설정 페이지 맨 위 카드에서 미리 받거나 지운다.
 
 #### 3.1.5. Recording
 
@@ -200,7 +199,7 @@
 
 **목적:** 노트 텍스트와 설정 보관
 
-**주요 키:** `malsaegim:projects`, `malsaegim:project:<id>`, `malsaegim:byok`, `malsaegim:translation`, `malsaegim:workspace`, `malsaegim:models`, `malsaegim:theme`
+**주요 키:** `malsaegim:projects`, `malsaegim:project:<id>`, `malsaegim:byok`, `malsaegim:translation`, `malsaegim:workspace`, `malsaegim:models`, `malsaegim:ondevice-model`, `malsaegim:ondevice-webgpu`, `malsaegim:theme`
 
 - 노트에는 제목, 편집 내용, 조각 시간표, 오디오 SHA-256 이 들어간다. 코드와 저장 키는 `project` 이름을 유지한다.
 - 노트는 JSON 으로 내보내고 가져올 수 있다. 녹음 원본은 포함하지 않는다.
@@ -225,9 +224,9 @@
 
 **목적:** On-Device 모델과 wasm 보관
 
-**주요 구조:** `public/models/manifest.json`(id, url, bytes, sha256)과 `public/models/<contentHash>/`
+**주요 구조:** `public/models/manifest.json`(schema 2: runtime 파일 + models)과 `public/models/runtime/<hash>/`, `public/models/<model-id>/<sha256 12자리>/`
 
-- 파일 단위로 이어받으며 sha256 을 검사하고, `malsaegim:models` 로 준비 여부를 빠르게 판단한다.
+- 런타임 + 고른 모델 하나만 받는다. 받으면서 스트리밍 SHA-256 으로 검사해 캐시에 넣고, `malsaegim:models` 에 묶음 키를 남겨 준비 여부를 빠르게 판단한다. 고른 모델은 `malsaegim:ondevice-model`, WebGPU 끄기는 `malsaegim:ondevice-webgpu` 에 둔다.
 
 ## 5. External Integrations / APIs
 
@@ -313,8 +312,9 @@ Node 20+, Yarn 4, Rust stable, `wasm32-unknown-unknown`, wasm-pack 이 필요하
 
 - **작은 소리 번역:** 작은 소리의 중국어가 인식되지 않는 문제의 원인을 아직 찾지 못했다.
 - **번역 통합 시험:** 앱에서 번역, 녹음, 저장을 이어서 돌리는 시험, Wi-Fi 복구, 60분 세션 교대, 과금, HWP 외국어 표시를 시험하지 못했다.
-- **엔진 버전:** whisper.cpp v1.9.5, sherpa-onnx v1.13.8 로 올린 값의 빌드와 동작을 검증해야 한다.
-- **wasm 이원화:** 스레드 모델이 같아지지 않는 한 엔진 wasm 두 개를 유지한다.
+- **WebGPU 실기기 검증:** 개발 환경에 GPU 가 없어 WebGPU 경로의 속도·정확도는 검증하지 못했다(폴백만 검증).
+- **모바일 실기기 검증:** iPhone·iPad·Android 에서 Turbo 로딩과 실시간 처리 여부를 확인해야 한다.
+- **파인튜닝:** 사투리·구어체 평가셋(`scripts/eval`)으로 약점을 잰 뒤 GPU 환경에서 별도로 진행한다.
 
 ## 10. Project Identification
 

@@ -136,8 +136,8 @@ docker --context prod image prune -f
 | 스테이지 | 역할 |
 |---|---|
 | `wasm` | 오디오 분할 wasm 빌드 |
-| `convert` | whisper 모델 변환 |
-| `emsdk` | 엔진 wasm 빌드, sherpa 모델 내려받기 |
+| `fetch` | whisper 모델 내려받기(리비전·sha256 고정) |
+| `emsdk` | 엔진 wasm 빌드(CPU·WebGPU 런타임) |
 | `manifest` | 모델 `manifest.json` 생성 |
 | `models` | 모델 산출물만 꺼내기 (`yarn models`) |
 | `build` | `next build`(standalone) |
@@ -147,7 +147,7 @@ docker --context prod image prune -f
 
 ### 4.2. Network Access
 
-빌드 중에는 crates.io, npm, Google Fonts, wasm-pack 이 받는 wasm-bindgen/binaryen 에 접근할 수 있어야 한다. Google Fonts 는 `next/font` 가 IBM Plex Sans KR 을 내려받아 자체 호스팅할 때 쓴다.
+빌드 중에는 crates.io, npm, Google Fonts, wasm-pack 이 받는 wasm-bindgen/binaryen, 모델을 받는 huggingface.co, emscripten `emdawnwebgpu` 포트를 받는 GitHub 릴리스에 접근할 수 있어야 한다. Google Fonts 는 `next/font` 가 IBM Plex Sans KR 을 내려받아 자체 호스팅할 때 쓴다.
 
 ### 4.3. Build Without Models
 
@@ -155,7 +155,7 @@ docker --context prod image prune -f
 docker build --build-arg WITH_MODELS=0 -t malsaegim .
 ```
 
-모델을 넣으면 이미지가 ≈ 405 MB 커진다(ggml q8_0 ≈ 252, sherpa int8 ≈ 135, wasm ≈ 14). 2026-08-27 실측 모델 포함 이미지는 1.12 GB 다.
+모델을 넣으면 이미지가 ≈ 1.1 GB 커진다(Turbo q8_0 ≈ 834 MiB, small q8_0 ≈ 252 MiB, 엔진 wasm 두 벌 ≈ 6 MB). 서버에는 두 모델이 다 있지만 브라우저는 기기에 맞는 하나만 받는다.
 
 ### 4.4. Image Contents
 
@@ -173,18 +173,20 @@ docker run --rm malsaegim sh -c 'ls -a /app; ls /app/docs 2>&1'
 | 본문 크기 | `client_max_body_size 16m;` | 조각은 최대 12MB 다(240초 WAV ≈ 7.7MB). |
 | 읽기 타임아웃 | `proxy_read_timeout 180s;` | `/api/asr/proxy` 는 최대 2분 걸릴 수 있다. |
 | 격리 헤더 | `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy: require-corp` 유지 | 벗기면 On-Device 인식이 멈춘다. |
-| 모델 캐시 | `/models/<version>/*` 는 프록시 캐시 가능 | `Cache-Control: immutable` 이고 파일 하나가 ≈ 180 MB 다. |
+| 모델 캐시 | `/models/<묶음>/<hash>/*` 는 프록시 캐시 가능 | `Cache-Control: immutable` 이고 Turbo 파일 하나가 ≈ 834 MiB 다. 프록시 본문 크기 제한을 확인한다. |
 
 ## 6. On-Device Models
 
 API 설정이 없는 브라우저는 서버가 `public/models/` 로 서빙하는 모델과 wasm 을 Cache Storage 에 한 번 내려받아 브라우저 안에서 인식한다.
 
-- **구조:** `manifest.json` + `<version>/`(파일 내용 해시 12자리). `public/models` 는 git 에 없다.
-- **이미지 빌드:** `docker build` 가 항상 이미지 안에서 만든다. torch 설치에 ≈ 10분, whisper·sherpa 빌드에 ≈ 20분이 걸리고, 이후에는 BuildKit 캐시로 스크립트가 바뀌지 않는 한 재사용한다.
+- **구조:** `manifest.json` + `runtime/<hash>/`(엔진 js·wasm) + `<model-id>/<sha256 12자리>/`(모델). `public/models` 는 git 에 없다.
+- **모델:** whisper large-v3-turbo Q8_0(기본)과 small Q8_0(메모리가 적은 모바일 기본). 실시간·파일 전사가 같은 파일을 쓴다. 자세한 내용은 [ENGINE.md](ENGINE.md) 에 있다.
+- **이미지 빌드:** `docker build` 가 항상 이미지 안에서 만든다. 모델 내려받기(≈ 1.1 GB)와 엔진 두 벌 빌드가 대부분이고, 이후에는 BuildKit 캐시로 스크립트가 바뀌지 않는 한 재사용한다.
 - **로컬 개발:** `yarn models` 가 Docker 의 `models` 스테이지를 `public/models` 로 꺼낸다. 툴체인을 갖춘 머신은 `yarn models:native` 를 쓴다.
-- **버전 교체:** 모델 버전이 바뀌면 브라우저는 새 버전만 다시 받고 이전 캐시를 지운다.
-- **브라우저 조건:** WebAssembly SIMD 와 교차 출처 격리가 필요하다(Chrome, Edge, Safari 최신, iPad Safari 포함).
-- **아이패드:** whisper 메모리(≈ 600 MB) 때문에 탭이 다시 로드될 수 있어 긴 파일은 BYOK 를 권한다.
+- **버전 교체:** 엔진이나 모델이 바뀌면 브라우저는 바뀐 파일만 다시 받고 이전 캐시를 지운다.
+- **브라우저 조건:** WebAssembly SIMD 와 교차 출처 격리가 필요하다. WebGPU(shader-f16)가 있으면 GPU 로 돌리고, 없으면 CPU 로 돌린다.
+- **메모리:** Turbo 는 CPU 실행 시 wasm 힙 ≈ 1.67 GB, small 은 ≈ 1.0 GB 다. 메모리가 부족해 로드에 실패하면 설정에서 small 로 바꾸라고 안내한다. 음성을 API 로 자동 전송하지 않는다.
+- **시크릿 창:** Chromium 시크릿 창은 Cache Storage 를 메모리에 두어 Turbo(874 MB)를 저장하지 못한다.
 
 ## 7. Operations
 
