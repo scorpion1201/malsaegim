@@ -80,7 +80,7 @@
 
 **설명:** 노트 목록, 받아쓰기, 실시간 번역, Tiptap 검수, 녹음·재생, 설정을 제공한다.
 
-**기술:** Next.js 16 App Router, React 19.2, TypeScript, CSS Modules, Tiptap 3, Web Worker, AudioWorklet, WebRTC, WebAssembly
+**기술:** Next.js 16 App Router, React 19.3, TypeScript, CSS Modules, Tiptap 3, Web Worker, AudioWorklet, WebRTC, WebAssembly
 
 **배포 대상:** Next.js standalone 서버가 정적 자산과 함께 서빙한다.
 
