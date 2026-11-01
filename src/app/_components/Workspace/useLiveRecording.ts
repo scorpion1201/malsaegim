@@ -72,7 +72,7 @@ export const useLiveRecording = (handlers: LiveRecordingHandlers) => {
     [],
   );
 
-  const start = useCallback(async (projectId: string) => {
+  const start = useCallback(async (projectId: string, sharedTrack?: MediaStreamTrack) => {
     setStatus('starting');
     levelsRef.current = [];
     writesRef.current = [];
@@ -112,7 +112,7 @@ export const useLiveRecording = (handlers: LiveRecordingHandlers) => {
         // 프레임을 먼저 흘려 보낸다 — 청커가 이 프레임에서 조각을 자르면 그 경계가 프레임 뒤에 오도록
         handlersRef.current.onFrame?.(samples);
         chunker.push(samples);
-      });
+      }, sharedTrack);
       captureRef.current = capture;
     } catch (error) {
       chunkerRef.current = null;

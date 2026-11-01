@@ -1234,7 +1234,7 @@ export const TranscribeWorkspace = () => {
         setCurrentMs(0);
         queueRef.current = null;
         setPhase('recording');
-        live.start(id).catch((error: unknown) => {
+        live.start(id, recognizer.micTrack).catch((error: unknown) => {
           stop();
           deleteProject(window.localStorage, id);
           resetWorkspace();

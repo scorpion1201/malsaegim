@@ -9,9 +9,6 @@ export type TranslationServerEvent = {
   error?: RealtimeEvent['error'];
 };
 
-/** raw 는 원음 송신, aec 는 스피커가 켜졌을 때의 송신. aec 를 못 열면 null */
-export type MicTracks = { raw: MediaStreamTrack; aec: MediaStreamTrack | null; stop: () => void };
-
 export type CallHandlers = {
   onEvent: (event: TranslationServerEvent) => void;
   /** sinceMs: 연결이 끊긴 것으로 보이기 시작한 시각 (performance.now) */
@@ -20,7 +17,6 @@ export type CallHandlers = {
 };
 
 export type TranslationCall = {
-  setSendTrack: (track: MediaStreamTrack) => Promise<void>;
   setSendEnabled: (enabled: boolean) => void;
   /** session.close, 채널이 닫혀 있으면 무시 */
   requestClose: () => void;
@@ -38,33 +34,21 @@ type CallOptions = {
 /** disconnected 는 잠깐 끊겼다 돌아오기도 해서 이만큼 지속될 때만 끊김으로 본다 */
 const DISCONNECTED_GRACE_MS = 5000;
 
-const openAecTrack = async (deviceId: string | undefined): Promise<MediaStreamTrack | null> => {
-  const device = deviceId ? { deviceId: { exact: deviceId } } : {};
-  for (const echoCancellation of [{ exact: 'remote-only' }, true]) {
-    try {
-      const constraints = { ...MIC_AUDIO_CONSTRAINTS, ...device, echoCancellation } as MediaTrackConstraints;
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: constraints });
-      return stream.getAudioTracks()[0] ?? null;
-    } catch (error) {
-      if (!(error instanceof Error) || error.name !== 'OverconstrainedError') return null;
-    }
-  }
-  return null;
-};
-
-/** 고정하지 않으면 두 트랙이 서로 다른 마이크를 잡는다 — AEC 트랙을 원음 트랙의 장치에 묶는다 */
-export const openMicTracks = async (): Promise<MicTracks> => {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS });
-  const raw = stream.getAudioTracks()[0];
-  const aec = await openAecTrack(raw.getSettings().deviceId);
-  return {
-    raw,
-    aec,
-    stop: () => {
-      raw.stop();
-      aec?.stop();
-    },
+/**
+ * 번역과 녹음이 함께 쓰는 마이크 트랙 하나. Chrome 은 같은 장치의 처리 설정을 첫 캡처에 묶어,
+ * 원음 트랙과 에코 제거 트랙을 같이 열면 에코 제거가 꺼진다. remote-only 는 번역 음성만 지워 현장 소리는 남는다.
+ */
+export const openMicTrack = async (): Promise<MediaStreamTrack> => {
+  const open = async (echoCancellation: ConstrainBoolean | { exact: string }) => {
+    const constraints = { ...MIC_AUDIO_CONSTRAINTS, echoCancellation } as MediaTrackConstraints;
+    return (await navigator.mediaDevices.getUserMedia({ audio: constraints })).getAudioTracks()[0];
   };
+  try {
+    return await open({ exact: 'remote-only' });
+  } catch (error) {
+    if (!(error instanceof Error) || error.name !== 'OverconstrainedError') throw error;
+    return open(true);
+  }
 };
 
 /** 미디어와 이벤트는 OpenAI 와 직결이다. 말새김 서버는 오디오와 SDP 를 보지 않는다 */
@@ -72,7 +56,6 @@ export const openTranslationCall = async ({ secret, sendTrack, audio, handlers, 
   const pc = new RTCPeerConnection();
   const channel = pc.createDataChannel('oai-events');
   const sender = pc.addTrack(sendTrack, new MediaStream([sendTrack]));
-  let sendEnabled = true;
   let closed = false;
   let downTimer: ReturnType<typeof setTimeout> | null = null;
   let disconnectedAtMs: number | null = null;
@@ -138,12 +121,7 @@ export const openTranslationCall = async ({ secret, sendTrack, audio, handlers, 
   }
 
   return {
-    setSendTrack: async (track) => {
-      track.enabled = sendEnabled;
-      await sender.replaceTrack(track);
-    },
     setSendEnabled: (enabled) => {
-      sendEnabled = enabled;
       if (sender.track) sender.track.enabled = enabled;
     },
     requestClose: () => {

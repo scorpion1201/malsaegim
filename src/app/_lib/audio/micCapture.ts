@@ -89,11 +89,14 @@ const OUTPUT_FRAME = 1600;
 export const MIC_AUDIO_CONSTRAINTS = { echoCancellation: false, noiseSuppression: true, autoGainControl: true };
 
 /** 마이크 → Float32 샘플 콜백. AudioWorklet 을 못 쓰는 브라우저는 ScriptProcessor 로 대체한다 */
-export const startMicCapture = async (onSamples: (samples: Float32Array) => void): Promise<MicCapture> => {
+export const startMicCapture = async (onSamples: (samples: Float32Array) => void, sharedTrack?: MediaStreamTrack): Promise<MicCapture> => {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error('이 브라우저나 주소에서는 마이크를 쓸 수 없습니다 (HTTPS 또는 localhost 필요)');
   }
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS });
+  // 번역 세션은 이미 연 트랙을 복제해 쓴다. 복제본은 일시정지와 정지가 원본과 따로 논다
+  const stream = sharedTrack
+    ? new MediaStream([sharedTrack.clone()])
+    : await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS });
   const context = createContext();
   await context.resume();
   const source = context.createMediaStreamSource(stream);

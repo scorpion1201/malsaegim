@@ -1,5 +1,3 @@
-import type { MicTracks, TranslationCall } from './translationCall';
-
 export type SpeakerState = {
   /** 사용자 의사. 설정에 저장된다 */
   intent: 'on' | 'off';
@@ -19,28 +17,14 @@ export const speakerView = (state: SpeakerState): SpeakerView => {
   return state.fuseTripped ? 'fuse' : 'on';
 };
 
-type SpeakerContext = { audio: HTMLAudioElement; call: TranslationCall | null; tracks: MicTracks };
-
 /**
- * 에코가 새지 않는 순서: 켜기는 AEC 트랙으로 바꾼 뒤 소리를 내고, 끄기는 소리를 끈 뒤 원음으로 돌린다.
+ * 재협상 없이 재생만 켜고 끈다. 송신 트랙은 remote-only 에코 제거가 항상 켜져 있어 바꾸지 않는다.
  * pause, srcObject 제거는 쓰지 않는다. 다시 켤 때 재생 재시작 실패를 만들지 않기 위해서다.
  */
-export const applySpeaker = async (next: SpeakerState, { audio, call, tracks }: SpeakerContext): Promise<SpeakerState> => {
-  const mute = async () => {
-    audio.muted = true;
-    await call?.setSendTrack(tracks.raw).catch(() => {});
-  };
-
+export const applySpeaker = async (next: SpeakerState, audio: HTMLAudioElement): Promise<SpeakerState> => {
   if (!audible(next)) {
-    await mute();
+    audio.muted = true;
     return next;
-  }
-  try {
-    if (tracks.aec) await call?.setSendTrack(tracks.aec);
-  } catch {
-    // 에코 위험을 만들지 않는다 — 켜기를 거부하고 끔으로 남는다
-    await mute();
-    return { ...next, intent: 'off' };
   }
   audio.muted = false;
   try {
@@ -48,7 +32,7 @@ export const applySpeaker = async (next: SpeakerState, { audio, call, tracks }: 
     return next;
   } catch (error) {
     if (error instanceof Error && error.name === 'NotAllowedError') {
-      await mute();
+      audio.muted = true;
       return { ...next, blocked: true };
     }
     // 원격 트랙이 아직 없으면 재생할 것이 없을 뿐이다

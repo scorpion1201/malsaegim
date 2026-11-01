@@ -6,7 +6,7 @@ import { formatTimestamp } from '@/app/_lib/time';
 import { createEchoFuse } from './echoFuse';
 import { usesSpaces } from './languages';
 import { applySpeaker, audible, type SpeakerState } from './speaker';
-import { openMicTracks, openTranslationCall, type MicTracks, type TranslationCall, type TranslationServerEvent } from './translationCall';
+import { openMicTrack, openTranslationCall, type TranslationCall, type TranslationServerEvent } from './translationCall';
 import { OUTPUT_SHIFT_MS, createSegmenter, type ClosedBlock, type SegmentStream } from './translationSegmenter';
 
 export type TranslationStatus = 'connecting' | 'live' | 'paused' | 'parked' | 'reconnecting' | 'unavailable' | 'draining';
@@ -21,6 +21,8 @@ export type TranslationHandlers = Omit<LiveRecognizerHandlers, 'onRestart'> & {
 };
 
 export type TranslationRecognizer = LiveRecognizer & {
+  /** 녹음도 이 트랙을 복제해 쓴다 — 같은 장치를 다른 설정으로 또 열면 에코 제거가 꺼진다 */
+  micTrack: MediaStreamTrack;
   /** 켜기는 blocked, fuseTripped 를 초기화한다 */
   setSpeaker: (intent: 'on' | 'off') => Promise<void>;
   pause: () => void;
@@ -101,7 +103,7 @@ export const startTranslationRecognizer = async (
   audio.autoplay = true;
   audio.muted = !speakerOn;
 
-  let tracks: MicTracks | null = null;
+  let mic: MediaStreamTrack | null = null;
   let connection: Connection | null = null;
   let speaker: SpeakerState = { intent: speakerOn ? 'on' : 'off', blocked: false, fuseTripped: false };
   let speakerQueue: Promise<void> = Promise.resolve();
@@ -136,15 +138,19 @@ export const startTranslationRecognizer = async (
     handlers.onDelay(next);
   };
 
-  const sendTrack = (mic: MicTracks): MediaStreamTrack => (audible(speaker) && mic.aec ? mic.aec : mic.raw);
-
   const updateSpeaker = (next: SpeakerState): Promise<void> => {
     speakerQueue = speakerQueue.then(async () => {
-      if (closed || !tracks) return;
-      speaker = await applySpeaker(next, { audio, call: connection?.call ?? null, tracks });
+      if (closed) return;
+      speaker = await applySpeaker(next, audio);
       handlers.onSpeaker(speaker);
     });
     return speakerQueue;
+  };
+
+  const tripFuse = () => {
+    fuse.reset();
+    void updateSpeaker({ ...speaker, fuseTripped: true });
+    handlers.onFuseTripped();
   };
 
   const emitPartial = () => {
@@ -154,10 +160,7 @@ export const startTranslationRecognizer = async (
 
   const onBlockClosed = (block: ClosedBlock) => {
     handlers.onFinal({ text: block.source, translation: block.translation, startMs: block.startMs, endMs: block.endMs });
-    if (audible(speaker) && fuse.check(block.source, performance.now())) {
-      void updateSpeaker({ ...speaker, fuseTripped: true });
-      handlers.onFuseTripped();
-    }
+    if (audible(speaker) && fuse.check(block.source, performance.now())) tripFuse();
   };
 
   const segmenter = createSegmenter({
@@ -217,7 +220,7 @@ export const startTranslationRecognizer = async (
     emitPartial();
   };
 
-  const connect = async (mic: MicTracks): Promise<void> => {
+  const connect = async (track: MediaStreamTrack): Promise<void> => {
     const secret = await mintTranslationSecret({ apiKey, targetLanguage, noiseReduction }, signal);
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -241,7 +244,7 @@ export const startTranslationRecognizer = async (
       const target: Connection = { call: null as unknown as TranslationCall, startWallMs: null, retired: false };
       openTranslationCall({
         secret,
-        sendTrack: sendTrack(mic),
+        sendTrack: track,
         audio,
         signal,
         handlers: {
@@ -332,9 +335,9 @@ export const startTranslationRecognizer = async (
     while (!closed && attempts < RECONNECT_DELAYS_MS.length) {
       await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAYS_MS[attempts]));
       attempts += 1;
-      if (closed || micLost || !tracks) break;
+      if (closed || micLost || !mic) break;
       try {
-        await connect(tracks);
+        await connect(mic);
         reconnecting = false;
         markLive();
         return;
@@ -364,8 +367,8 @@ export const startTranslationRecognizer = async (
     await runReconnect(sinceMs);
   };
 
-  const watchMic = (mic: MicTracks) => {
-    const lost = () => {
+  const watchMic = (track: MediaStreamTrack) => {
+    track.onended = () => {
       if (closed || status === 'draining') return;
       micLost = true;
       beginGap(performance.now());
@@ -374,20 +377,18 @@ export const startTranslationRecognizer = async (
       setStatus('unavailable');
       handlers.onMicLost();
     };
-    mic.raw.onended = lost;
-    if (mic.aec) mic.aec.onended = lost;
   };
 
   /** 만료 전 교대: 옛 세션을 드레인하며 새 세션을 연다. 재연결 횟수에 넣지 않는다 */
   const handoff = async (): Promise<void> => {
     const old = connection;
-    if (handoffRunning || !old || !tracks) return;
+    if (handoffRunning || !old || !mic) return;
     handoffRunning = true;
     beginGap(performance.now());
     retire(old);
     connection = null;
     try {
-      await connect(tracks);
+      await connect(mic);
       markLive();
     } catch {
       if (!closed) await runReconnect();
@@ -405,6 +406,7 @@ export const startTranslationRecognizer = async (
     emitPartial();
     if (lastInputMs > 0 && lastInputMs - lastOutputMs >= DELAY_AFTER_MS) setDelayed(true);
     if (handoffDue(HANDOFF_FORCE_MS)) void handoff();
+    if (audible(speaker) && fuse.looping(now)) tripFuse();
   }, TICK_MS);
 
   const cleanup = () => {
@@ -418,16 +420,16 @@ export const startTranslationRecognizer = async (
     for (const target of retired) target.call.close();
     retired.clear();
     audio.srcObject = null;
-    tracks?.stop();
-    tracks = null;
+    mic?.stop();
+    mic = null;
   };
 
   try {
     if (signal.aborted) throw abortError();
-    tracks = await openMicTracks();
+    mic = await openMicTrack();
     if (signal.aborted) throw abortError();
-    watchMic(tracks);
-    await connect(tracks);
+    watchMic(mic);
+    await connect(mic);
   } catch (error) {
     cleanup();
     throw error;
@@ -435,6 +437,7 @@ export const startTranslationRecognizer = async (
   setStatus('live');
 
   return {
+    micTrack: mic,
     push: (samples) => {
       sentMs += (samples.length / RECORDING_SAMPLE_RATE) * 1000;
     },
@@ -483,12 +486,12 @@ export const startTranslationRecognizer = async (
       if (status === 'paused') {
         connection?.call.setSendEnabled(true);
         setStatus('live');
-      } else if (status === 'parked' && tracks) {
+      } else if (status === 'parked' && mic) {
         // 재개 후 연결되는 동안의 말은 번역되지 않는다
         beginGap(performance.now());
         setStatus('connecting');
         try {
-          await connect(tracks);
+          await connect(mic);
           markLive();
         } catch {
           await runReconnect();

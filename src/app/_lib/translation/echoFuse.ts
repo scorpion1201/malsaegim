@@ -2,6 +2,8 @@ export type EchoFuse = {
   noteOutput: (text: string, wallMs: number) => void;
   /** 작동이면 true */
   check: (source: string, wallMs: number) => boolean;
+  /** 원문 없이 번역 글만 같은 말을 되풀이하는지. 원문 전사가 끊겨도 잡는다 */
+  looping: (wallMs: number) => boolean;
   reset: () => void;
 };
 
@@ -9,6 +11,9 @@ const WINDOW_MS = 30_000;
 const MIN_CHARS = 12;
 const MIN_DICE = 0.6;
 const CONSECUTIVE = 2;
+const LOOP_MIN_CHARS = 40;
+/** 평범한 글은 바이그램이 대부분 다르다. 되풀이되면 이 비율 아래로 떨어진다 */
+const LOOP_MAX_UNIQUE = 0.4;
 
 const normalize = (text: string): string => text.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
 
@@ -62,6 +67,12 @@ export const createEchoFuse = (): EchoFuse => {
       }
       streak = best >= MIN_DICE ? streak + 1 : 0;
       return streak >= CONSECUTIVE;
+    },
+    looping: (wallMs) => {
+      outputs = outputs.filter((entry) => wallMs - entry.wallMs <= WINDOW_MS);
+      const recent = normalize(outputs.map((entry) => entry.text).join(''));
+      if (recent.length < LOOP_MIN_CHARS) return false;
+      return bigrams(recent).size / (recent.length - 1) <= LOOP_MAX_UNIQUE;
     },
     reset: () => {
       outputs = [];
