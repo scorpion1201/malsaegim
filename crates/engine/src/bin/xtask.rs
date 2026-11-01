@@ -17,8 +17,8 @@ fn run(desc: &str, cmd: &mut Command) {
 const TARGET: &str = "wasm32-unknown-emscripten";
 
 // 엔진 소스 고정 리비전 (scripts/models/versions.sh 와 맞춘다)
-const WHISPER_CPP_REF: &str = "v1.9.3";
-const SHERPA_ONNX_REF: &str = "v1.13.6";
+const WHISPER_CPP_REF: &str = "v1.9.5";
+const SHERPA_ONNX_REF: &str = "v1.13.8";
 
 /// 없으면 얕은 클론한다. 있으면 그대로 쓴다.
 fn ensure_checkout(dir: &Path, url: &str, git_ref: &str) {
