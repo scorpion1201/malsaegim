@@ -3,6 +3,7 @@
  * recordings: 노트 id 당 원본 하나 — 녹음 노트는 완성된 WAV, 파일 노트는 불러온 파일 그대로(mp3 등).
  * parts: 녹음 중 조각(PCM16 바이트)을 순서대로 쌓아 두는 임시 저장소
  * (탭이 죽어도 마지막 조각까지는 남는다). 중지하면 parts 를 이어 recordings 로 옮기고 지운다.
+ * Safari 프라이빗 창은 IndexedDB 에 Blob 을 넣지 못하므로, 그때는 같은 내용을 바이트로 저장한다.
  */
 const DB_NAME = 'malsaegim';
 const DB_VERSION = 1;
@@ -16,6 +17,9 @@ export type StoredRecording = {
   durationMs: number;
   updatedAt: number;
 };
+
+/** blob 이 있으면 그대로, 없으면 bytes 로 저장된 레코드다 */
+type RecordingRow = Omit<StoredRecording, 'blob'> & { blob?: Blob; bytes?: ArrayBuffer };
 
 type StoredPart = { key: string; id: string; seq: number; pcm: ArrayBuffer };
 
@@ -62,11 +66,23 @@ export const listRecordingParts = (id: string): Promise<ArrayBuffer[]> =>
 export const deleteRecordingParts = (id: string): Promise<void> =>
   run(PARTS, 'readwrite', (s) => s.delete(partRange(id))).then(() => undefined);
 
+const toRecording = ({ blob, bytes, ...row }: RecordingRow): StoredRecording => ({
+  ...row,
+  blob: blob ?? new Blob(bytes ? [bytes] : [], { type: row.mimeType }),
+});
+
+/** 파일 전체를 메모리에 올리지 않도록 Blob 을 먼저 시도한다 */
 export const putRecording = (recording: StoredRecording): Promise<void> =>
-  run(RECORDINGS, 'readwrite', (s) => s.put(recording)).then(() => undefined);
+  run(RECORDINGS, 'readwrite', (s) => s.put(recording))
+    .catch(async () => {
+      const { blob, ...row } = recording;
+      const bytes = await blob.arrayBuffer();
+      return run(RECORDINGS, 'readwrite', (s) => s.put({ ...row, bytes } satisfies RecordingRow));
+    })
+    .then(() => undefined);
 
 export const getRecording = (id: string): Promise<StoredRecording | null> =>
-  run<StoredRecording | undefined>(RECORDINGS, 'readonly', (s) => s.get(id)).then((value) => value ?? null);
+  run<RecordingRow | undefined>(RECORDINGS, 'readonly', (s) => s.get(id)).then((row) => (row ? toRecording(row) : null));
 
 export const deleteRecording = (id: string): Promise<void> =>
   run(RECORDINGS, 'readwrite', (s) => s.delete(id)).then(() => undefined);
