@@ -6,7 +6,13 @@ export type SherpaRequest =
   | { type: 'audio'; samples: Float32Array }
   | { type: 'finish' };
 
-export type LiveSegment = { text: string; startMs: number; endMs: number };
+export type LiveSegment = {
+  text: string;
+  startMs: number;
+  endMs: number;
+  /** 번역 세션만 채운다 */
+  translation?: string;
+};
 
 export type SherpaResponse =
   | { type: 'loaded' }

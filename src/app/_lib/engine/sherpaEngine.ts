@@ -3,7 +3,7 @@ import type { LiveSegment, SherpaRequest, SherpaResponse } from './sherpaProtoco
 import { shutdownWhisperWorker } from './whisperEngine';
 
 export type LiveRecognizerHandlers = {
-  onPartial: (text: string, processedMs: number) => void;
+  onPartial: (text: string, processedMs: number, translationPartial?: string) => void;
   onFinal: (segment: LiveSegment) => void;
   /** 워커가 죽어 다시 띄우는 중 — 실시간 줄에 "인식 엔진 재시작" */
   onRestart: () => void;
@@ -13,8 +13,8 @@ export type LiveRecognizerHandlers = {
 export type LiveRecognizer = {
   /** 청커 시간축에 들어간 16 kHz 프레임 */
   push: (samples: Float32Array) => void;
-  /** 조각 경계를 알린다 — 서버가 턴을 나누지 않는 엔진(Realtime)만 쓴다 */
-  endTurn?: (range: { startMs: number; endMs: number }) => void;
+  /** 조각 경계를 알린다 — 서버가 턴을 나누지 않는 엔진(Realtime)만 쓴다. wav 가 있으면 말소리가 있는 조각이다 */
+  endTurn?: (range: { startMs: number; endMs: number; wav?: Uint8Array }) => void;
   /** 마지막 세그먼트를 받고 워커를 내린다 */
   finish: () => Promise<void>;
   terminate: () => void;
