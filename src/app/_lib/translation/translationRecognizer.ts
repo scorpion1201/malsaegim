@@ -16,6 +16,8 @@ export type TranslationHandlers = Omit<LiveRecognizerHandlers, 'onRestart'> & {
   onDelay: (delayed: boolean) => void;
   onSpeaker: (state: SpeakerState) => void;
   onFuseTripped: () => void;
+  /** 번역 마이크가 끊겼다. 녹음 경로도 같은 장치라 함께 멈췄을 수 있다 */
+  onMicLost: () => void;
 };
 
 export type TranslationRecognizer = LiveRecognizer & {
@@ -90,7 +92,10 @@ export const startTranslationRecognizer = async (
   options: TranslationStartOptions,
   handlers: TranslationHandlers,
 ): Promise<TranslationRecognizer> => {
-  const { apiKey, targetLanguage, noiseReduction, speakerOn, signal } = options;
+  const { apiKey, targetLanguage, noiseReduction, speakerOn } = options;
+  // 정리되면 진행 중인 발급과 연결을 함께 끊는다. 그래야 끝난 인식기가 세션을 새로 열지 않는다
+  const lifetime = new AbortController();
+  const signal = AbortSignal.any([options.signal, lifetime.signal]);
   // 사용자 제스처 안에서 만들어야 자동재생이 막히지 않는다 — 첫 await 앞에 둔다
   const audio = new Audio();
   audio.autoplay = true;
@@ -108,7 +113,7 @@ export const startTranslationRecognizer = async (
   let reconnecting = false;
   let expiresAtMs: number | null = null;
   let handoffRunning = false;
-  let gapStartMs: number | null = null;
+  let gapOpen = false;
   let lastInputMs = 0;
   let lastOutputMs = 0;
   let delayed = false;
@@ -117,6 +122,7 @@ export const startTranslationRecognizer = async (
   let onSessionClosed: (() => void) | null = null;
   let attempts = 0;
 
+  const retired = new Set<Connection>();
   const fuse = createEchoFuse();
 
   const setStatus = (next: TranslationStatus) => {
@@ -186,7 +192,11 @@ export const startTranslationRecognizer = async (
   const retire = (target: Connection) => {
     target.retired = true;
     target.call.requestClose();
-    setTimeout(() => target.call.close(), RETIRE_MS);
+    retired.add(target);
+    setTimeout(() => {
+      retired.delete(target);
+      target.call.close();
+    }, RETIRE_MS);
   };
 
   const onDelta = (target: Connection, stream: SegmentStream, event: TranslationServerEvent) => {
@@ -250,7 +260,7 @@ export const startTranslationRecognizer = async (
                 break;
               case 'session.closed':
                 if (target === connection && onSessionClosed) onSessionClosed();
-                else if (target === connection && !target.retired) void onDown();
+                else if (target === connection && !target.retired) void onDown(performance.now());
                 break;
               case 'error':
                 handlers.onError(realtimeError(event.error));
@@ -259,12 +269,12 @@ export const startTranslationRecognizer = async (
                 break;
             }
           },
-          onDown: () => {
+          onDown: (sinceMs) => {
             if (!settled) {
               fail(new AsrNetworkError('요청을 보내지 못했습니다 (연결 끊김)'));
               return;
             }
-            if (target === connection && !target.retired) void onDown();
+            if (target === connection && !target.retired) void onDown(sinceMs);
           },
           onPlayBlocked: () => void updateSpeaker({ ...speaker, blocked: true }),
         },
@@ -286,9 +296,22 @@ export const startTranslationRecognizer = async (
     });
   };
 
+  const beginGap = (wallMs: number) => {
+    if (gapOpen) return;
+    gapOpen = true;
+    segmenter.openGap(wallMs);
+  };
+
   const markLive = () => {
-    if (gapStartMs !== null) segmenter.markGap(gapStartMs, performance.now());
-    gapStartMs = null;
+    if (closed || status === 'draining') return;
+    if (micLost) {
+      connection?.call.close();
+      connection = null;
+      setStatus('unavailable');
+      return;
+    }
+    if (gapOpen) segmenter.closeGap(performance.now());
+    gapOpen = false;
     setStatus(paused ? 'paused' : 'live');
     if (paused) armPark();
     clearStableTimer();
@@ -298,25 +321,19 @@ export const startTranslationRecognizer = async (
   };
 
   /** 재연결: 기존 pc 폐기 → 새 임시 키 → 같은 트랙과 같은 audio 요소. 녹음은 멈추지 않는다 */
-  const runReconnect = async (): Promise<void> => {
+  const runReconnect = async (sinceMs = performance.now()): Promise<void> => {
     if (reconnecting || closed) return;
     reconnecting = true;
     clearStableTimer();
     setStatus('reconnecting');
-    gapStartMs ??= performance.now();
+    beginGap(sinceMs);
     connection?.call.close();
     connection = null;
     while (!closed && attempts < RECONNECT_DELAYS_MS.length) {
       await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAYS_MS[attempts]));
       attempts += 1;
-      if (closed) break;
+      if (closed || micLost || !tracks) break;
       try {
-        if (micLost || !tracks) {
-          tracks?.stop();
-          tracks = await openMicTracks();
-          watchMic(tracks);
-          micLost = false;
-        }
         await connect(tracks);
         reconnecting = false;
         markLive();
@@ -332,7 +349,7 @@ export const startTranslationRecognizer = async (
     if (!closed) setStatus('unavailable');
   };
 
-  const onDown = async (): Promise<void> => {
+  const onDown = async (sinceMs: number): Promise<void> => {
     if (closed || status === 'draining') {
       onSessionClosed?.();
       return;
@@ -344,17 +361,18 @@ export const startTranslationRecognizer = async (
       setStatus('parked');
       return;
     }
-    await runReconnect();
+    await runReconnect(sinceMs);
   };
 
   const watchMic = (mic: MicTracks) => {
     const lost = () => {
       if (closed || status === 'draining') return;
       micLost = true;
-      gapStartMs ??= performance.now();
+      beginGap(performance.now());
       connection?.call.close();
       connection = null;
       setStatus('unavailable');
+      handlers.onMicLost();
     };
     mic.raw.onended = lost;
     if (mic.aec) mic.aec.onended = lost;
@@ -365,7 +383,7 @@ export const startTranslationRecognizer = async (
     const old = connection;
     if (handoffRunning || !old || !tracks) return;
     handoffRunning = true;
-    gapStartMs = performance.now();
+    beginGap(performance.now());
     retire(old);
     connection = null;
     try {
@@ -391,11 +409,14 @@ export const startTranslationRecognizer = async (
 
   const cleanup = () => {
     closed = true;
+    lifetime.abort();
     clearInterval(tickTimer);
     clearParkTimer();
     clearStableTimer();
     connection?.call.close();
     connection = null;
+    for (const target of retired) target.call.close();
+    retired.clear();
     audio.srcObject = null;
     tracks?.stop();
     tracks = null;
@@ -435,7 +456,8 @@ export const startTranslationRecognizer = async (
           resolve();
         };
         const limit = setTimeout(done, FINISH_TIMEOUT_MS);
-        if (!current) {
+        // 세션이 아직 뜨지 않았으면 받을 번역도 없다 — 연결을 취소하고 끝낸다
+        if (!current || current.startWallMs === null) {
           done();
           return;
         }
@@ -462,6 +484,8 @@ export const startTranslationRecognizer = async (
         connection?.call.setSendEnabled(true);
         setStatus('live');
       } else if (status === 'parked' && tracks) {
+        // 재개 후 연결되는 동안의 말은 번역되지 않는다
+        beginGap(performance.now());
         setStatus('connecting');
         try {
           await connect(tracks);

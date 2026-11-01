@@ -25,7 +25,7 @@ export type TranscribeEngine = {
 
 export const BYOK_CONCURRENCY = 8;
 
-/** 설정 페이지의 API 로 보낸다 (pass-through). 429/5xx·네트워크는 재시도, 그 밖의 HTTP 오류는 치명적 */
+/** 설정 페이지의 API 로 보낸다 (pass-through). 403/413/429/5xx·네트워크는 재시도, 그 밖의 HTTP 오류는 치명적 */
 export const createByokEngine = (settings: ByokSettings): TranscribeEngine => ({
   kind: 'byok',
   concurrency: BYOK_CONCURRENCY,
@@ -36,7 +36,7 @@ export const createByokEngine = (settings: ByokSettings): TranscribeEngine => ({
       if (signal.aborted) throw error;
       if (error instanceof AsrNetworkError) throw new AsrRetryableError(error.message);
       if (error instanceof AsrHttpError) {
-        if (error.status === 429 || error.status >= 500) throw new AsrRetryableError(`HTTP ${error.status}`);
+        if (error.status === 403 || error.status === 413 || error.status === 429 || error.status >= 500) throw new AsrRetryableError(`HTTP ${error.status}`);
         throw new AsrFatalError(`${error.message} (HTTP ${error.status})`);
       }
       throw new AsrRetryableError(error instanceof Error ? error.message : 'unknown error');

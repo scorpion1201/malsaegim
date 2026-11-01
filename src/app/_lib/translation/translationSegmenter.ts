@@ -14,7 +14,9 @@ export type Segmenter = {
   cut: (range: { startMs: number; endMs: number; voiced: boolean }, wallMs: number) => void;
   /** 3초 시한 처리 */
   tick: (wallMs: number) => void;
-  markGap: (fromWallMs: number, toWallMs: number) => void;
+  /** 끊긴 즉시 연다. 닫히기 전에 공개되는 블록도 표식을 받는다 */
+  openGap: (fromWallMs: number) => void;
+  closeGap: (toWallMs: number) => void;
   /** 남은 블록 전부 확정 */
   flush: () => void;
   partial: () => { source: string; translation: string };
@@ -43,7 +45,7 @@ const NO_SPACE_SCRIPT = /^[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\
 /** 델타를 문단 경계에 배정한다. 시각은 전부 인자로 받는다 */
 export const createSegmenter = ({ glueWords, formatGap, onClose }: SegmenterOptions): Segmenter => {
   const open: OpenBlock[] = [];
-  const gaps: { fromWallMs: number; toWallMs: number }[] = [];
+  const gaps: { fromWallMs: number; toWallMs: number | null }[] = [];
   let progress = { source: '', translation: '' };
   let lastCutWallMs = 0;
   let lastEndMs = 0;
@@ -56,9 +58,10 @@ export const createSegmenter = ({ glueWords, formatGap, onClose }: SegmenterOpti
     if (block.voiced) {
       const { startMs, endMs } = block.range;
       for (const gap of gaps) {
-        if (gap.fromWallMs >= block.cutWallMs || gap.toWallMs <= block.startWallMs) continue;
+        const toWallMs = gap.toWallMs ?? block.cutWallMs;
+        if (gap.fromWallMs >= block.cutWallMs || toWallMs <= block.startWallMs) continue;
         const from = Math.max(startMs, endMs - (block.cutWallMs - gap.fromWallMs));
-        const to = Math.min(endMs, endMs - (block.cutWallMs - gap.toWallMs));
+        const to = Math.max(from, Math.min(endMs, endMs - (block.cutWallMs - toWallMs)));
         translation = `${translation} ${formatGap(from, to)}`.trim();
       }
     }
@@ -123,8 +126,12 @@ export const createSegmenter = ({ glueWords, formatGap, onClose }: SegmenterOpti
       lastEndMs = range.endMs;
     },
     tick: closeReady,
-    markGap: (fromWallMs, toWallMs) => {
-      gaps.push({ fromWallMs, toWallMs });
+    openGap: (fromWallMs) => {
+      gaps.push({ fromWallMs, toWallMs: null });
+    },
+    closeGap: (toWallMs) => {
+      const last = gaps[gaps.length - 1];
+      if (last) last.toWallMs = toWallMs;
     },
     flush: () => {
       const last = open[open.length - 1];

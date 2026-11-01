@@ -14,7 +14,8 @@ export type MicTracks = { raw: MediaStreamTrack; aec: MediaStreamTrack | null; s
 
 export type CallHandlers = {
   onEvent: (event: TranslationServerEvent) => void;
-  onDown: () => void;
+  /** sinceMs: 연결이 끊긴 것으로 보이기 시작한 시각 (performance.now) */
+  onDown: (sinceMs: number) => void;
   onPlayBlocked: () => void;
 };
 
@@ -74,6 +75,7 @@ export const openTranslationCall = async ({ secret, sendTrack, audio, handlers, 
   let sendEnabled = true;
   let closed = false;
   let downTimer: ReturnType<typeof setTimeout> | null = null;
+  let disconnectedAtMs: number | null = null;
 
   const clearDownTimer = () => {
     if (downTimer !== null) clearTimeout(downTimer);
@@ -83,7 +85,7 @@ export const openTranslationCall = async ({ secret, sendTrack, audio, handlers, 
   const down = () => {
     if (closed) return;
     clearDownTimer();
-    handlers.onDown();
+    handlers.onDown(disconnectedAtMs ?? performance.now());
   };
 
   const close = () => {
@@ -96,8 +98,13 @@ export const openTranslationCall = async ({ secret, sendTrack, audio, handlers, 
 
   pc.onconnectionstatechange = () => {
     if (pc.connectionState === 'failed') down();
-    else if (pc.connectionState === 'disconnected') downTimer ??= setTimeout(down, DISCONNECTED_GRACE_MS);
-    else clearDownTimer();
+    else if (pc.connectionState === 'disconnected') {
+      disconnectedAtMs ??= performance.now();
+      downTimer ??= setTimeout(down, DISCONNECTED_GRACE_MS);
+    } else {
+      disconnectedAtMs = null;
+      clearDownTimer();
+    }
   };
   pc.ontrack = (event) => {
     audio.srcObject = event.streams[0];
