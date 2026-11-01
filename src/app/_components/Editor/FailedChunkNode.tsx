@@ -15,10 +15,12 @@ const label = (startMs: number, endMs: number) =>
 const FailedChunkView = ({ node }: ReactNodeViewProps) => {
   const startMs = Number(node.attrs.startMs ?? 0);
   const endMs = Number(node.attrs.endMs ?? 0);
+  // 이어 붙인 파트는 파트 안 시각으로 보인다 (재인식 요청은 노트 시간축 그대로)
+  const offset = Number(node.attrs.offset ?? 0);
   return (
     <NodeViewWrapper as="span" className={styles.failedWrapper}>
       <span className={styles.failedLabel} contentEditable={false}>
-        {label(startMs, endMs)}
+        {label(startMs - offset, endMs - offset)}
       </span>
       <button
         type="button"
@@ -61,6 +63,11 @@ export const FailedChunkNode = Node.create({
         parseHTML: (element) => Number(element.getAttribute('data-end-ms') ?? 0),
         renderHTML: (attributes) => ({ 'data-end-ms': String(attributes.endMs) }),
       },
+      offset: {
+        default: 0,
+        parseHTML: (element) => Number(element.getAttribute('data-offset') ?? 0),
+        renderHTML: (attributes) => (Number(attributes.offset) > 0 ? { 'data-offset': String(attributes.offset) } : {}),
+      },
     };
   },
 
@@ -72,7 +79,10 @@ export const FailedChunkNode = Node.create({
     return [
       'span',
       mergeAttributes({ 'data-failed-chunk': '' }, HTMLAttributes),
-      label(Number(HTMLAttributes['data-start-ms'] ?? 0), Number(HTMLAttributes['data-end-ms'] ?? 0)),
+      label(
+        Number(HTMLAttributes['data-start-ms'] ?? 0) - Number(HTMLAttributes['data-offset'] ?? 0),
+        Number(HTMLAttributes['data-end-ms'] ?? 0) - Number(HTMLAttributes['data-offset'] ?? 0),
+      ),
     ];
   },
 

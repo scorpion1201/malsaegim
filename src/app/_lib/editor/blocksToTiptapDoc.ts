@@ -1,10 +1,23 @@
 import type { TranscriptBlock } from '@/app/_lib/asr/assembleTranscript';
 import type { TiptapDoc, TiptapNode } from '@/app/_lib/hwp/tiptapToDocModel';
 
-/** 인식 실패 조각 노드 — 에디터에서 "인식 실패 mm:ss–mm:ss" + 재인식 버튼으로 그려진다 */
-export const failedChunkNode = (startMs: number, endMs: number): TiptapNode => ({
+/** 인식 실패 조각 노드 — 에디터에서 "인식 실패 mm:ss–mm:ss" + 재인식 버튼으로 그려진다. offset 은 이어 붙인 파트의 시작 시각 */
+export const failedChunkNode = (startMs: number, endMs: number, offset = 0): TiptapNode => ({
   type: 'failedChunk',
-  attrs: { startMs, endMs },
+  attrs: offset > 0 ? { startMs, endMs, offset } : { startMs, endMs },
+});
+
+/** 타임스탬프 노드 — ms 는 노트 전체 시간축(재생 이동), 화면에는 ms - offset(파트 안 시각)으로 보인다 */
+export const timestampNode = (ms: number, offset = 0): TiptapNode => ({
+  type: 'timestamp',
+  attrs: offset > 0 ? { ms, offset } : { ms },
+});
+
+/** 이어 붙인 파트의 구분 제목 */
+export const partHeadingNode = (partNumber: number, label: string): TiptapNode => ({
+  type: 'heading',
+  attrs: { level: 3 },
+  content: [{ type: 'text', text: `Part ${partNumber} · ${label}` }],
 });
 
 /** 원문만 있고 번역이 오지 않은 블록의 번역 문단 */
@@ -23,7 +36,7 @@ const translationParagraphs = (block: TranscriptBlock, languages?: BlockLanguage
       type: 'paragraph',
       attrs: roleAttrs('translation', languages?.target),
       content: [
-        { type: 'timestamp', attrs: { ms: block.startMs } },
+        timestampNode(block.startMs),
         { type: 'text', text: block.translation || NO_TRANSLATION },
       ],
     },
@@ -38,7 +51,11 @@ const translationParagraphs = (block: TranscriptBlock, languages?: BlockLanguage
   return paragraphs;
 };
 
-export const blocksToTiptapDoc = (blocks: TranscriptBlock[], languages?: BlockLanguages): TiptapDoc => {
+/**
+ * 조립된 블록 → 문서. offsetMs 를 주면 이어 붙인 파트다 — 블록 시각(파트 안)에 offsetMs 를 더해 노트 시간축으로 저장하고,
+ * 화면에는 파트 안 시각이 보이도록 offset 을 함께 적는다
+ */
+export const blocksToTiptapDoc = (blocks: TranscriptBlock[], languages?: BlockLanguages, offsetMs = 0): TiptapDoc => {
   if (blocks.length === 0) return { type: 'doc', content: [{ type: 'paragraph' }] };
   const content: TiptapNode[] = blocks.flatMap((block) =>
     block.translation === undefined
@@ -46,8 +63,10 @@ export const blocksToTiptapDoc = (blocks: TranscriptBlock[], languages?: BlockLa
           {
             type: 'paragraph',
             content: [
-              { type: 'timestamp', attrs: { ms: block.startMs } },
-              block.failed ? failedChunkNode(block.startMs, block.endMs) : { type: 'text', text: block.text },
+              timestampNode(block.startMs + offsetMs, offsetMs),
+              block.failed
+                ? failedChunkNode(block.startMs + offsetMs, block.endMs + offsetMs, offsetMs)
+                : { type: 'text', text: block.text },
             ],
           },
         ]

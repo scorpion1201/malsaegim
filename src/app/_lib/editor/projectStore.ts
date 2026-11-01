@@ -24,13 +24,21 @@ export type ProjectAudio = {
   mimeType?: string;
 };
 
+/** 이어 붙인 오디오 한 파트 — 노트 시간축에서 offsetMs 부터 시작한다. 원본 키는 partStorageKey(노트 id, 순번) */
+export type ProjectAudioPart = ProjectAudio & { offsetMs: number };
+
 export type Project = {
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
-  /** localStorage 에는 텍스트만 — 파일 노트는 재선택 시 sha256 으로 동일성만 확인하고, 녹음 노트는 WAV 를 IndexedDB 에 둔다 */
+  /** localStorage 에는 텍스트만 — 파일 노트는 재선택 시 sha256 으로 동일성만 확인하고, 녹음 노트는 WAV 를 IndexedDB 에 둔다. 파트가 있으면 첫 파트 */
   audio: ProjectAudio | null;
+  /**
+   * 열린 노트에 이어 녹음·불러오기한 오디오들(part 1, 2, …). 없으면 audio 하나뿐인 노트다.
+   * 조각·타임스탬프는 노트 전체 시간축(파트 시작 + 파트 안 시각)이고, 화면에는 파트 안 시각으로 보인다
+   */
+  parts?: ProjectAudioPart[];
   /** 최초 인식에 쓴 분할 옵션 (참고용 — 재인식은 chunks 의 시간 구간을 정본으로 쓴다) */
   splitOptions: SplitOptions | null;
   chunks: StoredChunk[];
@@ -78,10 +86,17 @@ const isChunk = (value: unknown): value is StoredChunk => {
   );
 };
 
+const isPart = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) return false;
+  const part = value as ProjectAudioPart;
+  return typeof part.name === 'string' && typeof part.durationMs === 'number' && typeof part.offsetMs === 'number' && part.offsetMs >= 0;
+};
+
 const isProject = (value: unknown): value is Project => {
   if (typeof value !== 'object' || value === null) return false;
   const project = value as Project;
   return (
+    (project.parts === undefined || (Array.isArray(project.parts) && project.parts.every(isPart))) &&
     typeof project.id === 'string' &&
     typeof project.title === 'string' &&
     typeof project.updatedAt === 'number' &&
@@ -94,6 +109,28 @@ const isProject = (value: unknown): value is Project => {
 export const audioKindOf = (audio: ProjectAudio | null | undefined): 'file' | 'recording' | 'text' =>
   audio ? (audio.kind ?? 'file') : 'text';
 
+/** 원본(IndexedDB recordings) 키 — 첫 파트는 예전 노트와 같게 노트 id, 그 뒤는 id#2, id#3 … */
+export const partStorageKey = (projectId: string, index: number): string => (index === 0 ? projectId : `${projectId}#${index + 1}`);
+
+/** 노트의 오디오 파트들 — 예전 노트는 audio 하나를 파트 하나로 본다 */
+export const notePartsOf = (project: Pick<Project, 'audio' | 'parts'>): ProjectAudioPart[] => {
+  if (project.parts && project.parts.length > 0) return project.parts;
+  return project.audio ? [{ ...project.audio, offsetMs: 0 }] : [];
+};
+
+/** 노트 전체 길이 (모든 파트) */
+export const noteDurationOf = (project: Pick<Project, 'audio' | 'parts'>): number => {
+  const parts = notePartsOf(project);
+  const last = parts[parts.length - 1];
+  return last ? last.offsetMs + last.durationMs : 0;
+};
+
+/** 노트 시간축의 ms 가 속한 파트 순번 (없으면 -1) */
+export const partIndexAt = (parts: ProjectAudioPart[], ms: number): number => {
+  for (let index = parts.length - 1; index >= 0; index -= 1) if (ms >= parts[index].offsetMs) return index;
+  return parts.length > 0 ? 0 : -1;
+};
+
 export const toMeta = (project: Project): ProjectMeta => ({
   id: project.id,
   title: project.title,
@@ -102,7 +139,7 @@ export const toMeta = (project: Project): ProjectMeta => ({
   failedCount: project.chunks.filter((chunk) => chunk.status === 'failed').length,
   audioName: project.audio?.name ?? null,
   kind: audioKindOf(project.audio),
-  durationMs: project.audio?.durationMs ?? null,
+  durationMs: project.audio ? noteDurationOf(project) : null,
   sourceLanguage: project.translation?.sourceLanguage,
   targetLanguage: project.translation?.targetLanguage,
 });

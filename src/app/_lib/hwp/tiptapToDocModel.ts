@@ -29,8 +29,10 @@ const runsOf = (nodes: TiptapNode[] | undefined): Run[][] => {
       // 내보내기에서는 버린다
     } else if (node.type === 'failedChunk') {
       // 실패 조각은 문서에 자리표시 텍스트로 남긴다
-      const startMs = Number(node.attrs?.startMs ?? 0);
-      const endMs = Number(node.attrs?.endMs ?? 0);
+      // 이어 붙인 파트는 파트 안 시각으로 적는다
+      const offset = Number(node.attrs?.offset ?? 0);
+      const startMs = Number(node.attrs?.startMs ?? 0) - offset;
+      const endMs = Number(node.attrs?.endMs ?? 0) - offset;
       groups[groups.length - 1].push({
         text: `[인식 실패 ${formatTimestamp(startMs)}–${formatTimestamp(endMs)}]`,
         bold: false,
