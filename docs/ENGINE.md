@@ -69,7 +69,7 @@ The worker mounts the cached `Blob` with WORKERFS. whisper.cpp reads through a 1
 
 `liveSession.ts` holds the state machine. `whisperLive.ts` connects it to the shared worker.
 
-- **Buffer:** Holds the audio from the last committed point to now, using the recording timeline (the same samples as the saved WAV). The shared `voiceDetector` marks each 100 ms frame against an adaptive noise floor, so it works at any input level. Silence is never recognized.
+- **Buffer:** Holds the audio from the last committed point to now, using the recording timeline (the same samples as the saved WAV). The shared `voiceDetector` marks each 100 ms frame by voice periodicity and an adaptive noise floor, so it works at any input level. Silence is never recognized.
 - **Updates:** With at least 1 s of new audio, the whole window is recognized again. Only one request is ever in flight.
 - **Commit:** Words that two consecutive results agree on, from the start (LocalAgreement-2), are committed. Committed words never change. Words within 300 ms of the window end wait for the next pass. The buffer is trimmed only when a sentence is emitted, so a sentence is always recognized with its full context. The already committed part of each new result is removed by character-level alignment (spaces ignored), because Whisper re-spaces words between passes and even joins words across the commit boundary.
 - **End of utterance:** After 700 ms of silence, the window up to the last speech plus 100 ms is recognized once more and fully committed. The VAD holds quiet word endings through hysteresis and a 200 ms hangover. Windows with under 300 ms of speech are dropped, because tiny fragments make Whisper hallucinate. On stop, everything up to the last sample is flushed.

@@ -127,7 +127,8 @@ const OUTPUT_FRAME = 1600;
 
 // 에코 제거는 끈다: 이 앱은 녹음 중 소리를 내지 않는데, OS 의 에코 제거가 스피커로 나오는
 // 다른 사람 목소리(회의 스피커폰 등)를 "에코"로 보고 몇 초 뒤부터 지워 버린다.
-export const MIC_AUDIO_CONSTRAINTS = { echoCancellation: false, noiseSuppression: true, autoGainControl: true };
+// 잡음 억제도 끈다: 가까운 말소리에 맞춰져 있어 멀리 있는 회의 참석자의 말을 잡음으로 지운다. 잡음은 인식 모델이 견딘다.
+export const MIC_AUDIO_CONSTRAINTS = { echoCancellation: false, noiseSuppression: false, autoGainControl: true };
 
 /** 마이크 → Float32 샘플 콜백. AudioWorklet 을 못 쓰는 브라우저는 ScriptProcessor 로 대체한다 */
 export const startMicCapture = async (onSamples: (samples: Float32Array) => void, sharedTrack?: MediaStreamTrack): Promise<MicCapture> => {

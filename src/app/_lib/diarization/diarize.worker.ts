@@ -1,4 +1,4 @@
-import { createVoiceDetector, frameDb } from '@/app/_lib/audio/voiceDetector';
+import { createVoiceDetector } from '@/app/_lib/audio/voiceDetector';
 import { clusterSpeakers } from './clusterSpeakers';
 import { HOP_SAMPLES, MEL_BINS, createFbank } from './fbank';
 import type { DiarizeRequest, DiarizeResponse } from './diarizeProtocol';
@@ -36,7 +36,7 @@ const voiceActivity = (pcm: Int16Array): Uint8Array => {
   const voiced = new Uint8Array(count);
   for (let index = 0; index < count; index += 1) {
     for (let i = 0; i < VAD_FRAME_SAMPLES; i += 1) frame[i] = pcm[index * VAD_FRAME_SAMPLES + i] / 0x8000;
-    voiced[index] = detector.classify(frameDb(frame), 100) ? 1 : 0;
+    voiced[index] = detector.classify(frame) ? 1 : 0;
   }
   return voiced;
 };

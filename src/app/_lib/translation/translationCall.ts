@@ -40,7 +40,8 @@ const DISCONNECTED_GRACE_MS = 5000;
  */
 export const openMicTrack = async (): Promise<MediaStreamTrack> => {
   const open = async (echoCancellation: ConstrainBoolean | { exact: string }) => {
-    const constraints = { ...MIC_AUDIO_CONSTRAINTS, echoCancellation } as MediaTrackConstraints;
+    // 번역은 스피커 소리가 함께 들어오므로 브라우저 잡음 억제를 유지한다
+    const constraints = { ...MIC_AUDIO_CONSTRAINTS, noiseSuppression: true, echoCancellation } as MediaTrackConstraints;
     return (await navigator.mediaDevices.getUserMedia({ audio: constraints })).getAudioTracks()[0];
   };
   try {
