@@ -1,5 +1,6 @@
 pub mod decode;
 pub mod extract;
+pub mod level;
 pub mod resample;
 pub mod splitter;
 pub mod wav;
@@ -36,10 +37,11 @@ pub fn split_audio(
     let mut total_ms = 0f64;
     let mut callback_error: Option<JsValue> = None;
 
-    let mut emit = |chunk: splitter::Chunk| {
+    let mut emit = |mut chunk: splitter::Chunk| {
         if callback_error.is_some() {
             return;
         }
+        level::normalize(&mut chunk.samples, OUT_RATE);
         let wav = wav::encode_pcm16_mono(&wav::f32_to_i16(&chunk.samples), OUT_RATE);
         let args = Array::of4(
             &JsValue::from(chunk.index),
@@ -102,10 +104,11 @@ pub fn extract_ranges(
 
     let mut count = 0u32;
     let mut callback_error: Option<JsValue> = None;
-    let total_ms = extract::extract_ranges_pcm(data.to_vec(), &specs, &mut |index, start, end, samples| {
+    let total_ms = extract::extract_ranges_pcm(data.to_vec(), &specs, &mut |index, start, end, mut samples| {
         if callback_error.is_some() {
             return;
         }
+        level::normalize(&mut samples, OUT_RATE);
         let wav = wav::encode_pcm16_mono(&wav::f32_to_i16(&samples), OUT_RATE);
         let args = Array::of4(
             &JsValue::from(index),
