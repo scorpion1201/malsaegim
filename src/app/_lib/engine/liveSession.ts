@@ -12,7 +12,7 @@
  * 무음: 말소리가 없는 동안은 인식하지 않는다 (환각 방지·전력).
  * 종료: finish 는 남은 말소리를 모두 flush 한 뒤 끝난다. terminate 뒤 도착한 결과는 버린다.
  */
-import { createVoiceDetector, frameDb } from '@/app/_lib/audio/voiceDetector';
+import { createVoiceDetector } from '@/app/_lib/audio/voiceDetector';
 import type { LiveSegment } from './liveTypes';
 import type { LiveWord } from './whisperProtocol';
 
@@ -441,7 +441,7 @@ export const createLiveSession = (recognize: Recognize, handlers: LiveSessionHan
       chunks.push(samples.slice());
       totalMs += frameMs;
       stats.audioMs = totalMs;
-      marks.push({ endMs: totalMs, speech: detector.classify(frameDb(samples), frameMs) });
+      marks.push({ endMs: totalMs, speech: detector.classify(samples) });
       // 말소리가 없으면 프리롤만 남긴다 — 무음은 인식하지 않는다. 버린 오디오의 미확정 결과도 버리고, 확정한 어절은 내보낸다
       if (!inflight && !hasSpeechAfter(bufStartMs) && bufferMs() > PREROLL_MS * 2) {
         hypothesis = [];

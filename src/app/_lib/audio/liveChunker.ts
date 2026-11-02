@@ -14,6 +14,8 @@ export type LiveChunkerOptions = {
   pauseFrames: number;
   /** 첫 말소리 앞에 남겨 두는 무음 프레임 수 — 그 앞의 무음은 버려서 녹음이 말소리 직전에서 시작한다 */
   preRollFrames: number;
+  /** 말소리가 없어도 이만큼 지나면 저장을 시작한다 — 판정이 먼 말소리를 놓쳐도 원본은 남아야 다시 들을 수 있다 */
+  maxLeadingFrames: number;
 };
 
 export const DEFAULT_LIVE_CHUNKER_OPTIONS: LiveChunkerOptions = {
@@ -25,14 +27,18 @@ export const DEFAULT_LIVE_CHUNKER_OPTIONS: LiveChunkerOptions = {
   minSilenceFrames: 3,
   pauseFrames: 6,
   preRollFrames: 3,
+  maxLeadingFrames: 30,
 };
+
+/** 말소리 프레임이 이보다 적은 조각은 말이 없는 조각이다 — 잡음 한 프레임으로 빈 구간을 인식에 보내지 않는다 */
+const MIN_VOICED_FRAMES = 2;
 
 export type LiveChunk = {
   index: number;
   startMs: number;
   endMs: number;
   pcm: Int16Array;
-  /** 말소리 프레임이 하나라도 있었는지 — 없으면 인식 API 에 보낼 이유가 없다 */
+  /** 말소리 프레임이 충분한지 — 아니면 인식 API 에 보낼 이유가 없다 */
   voiced: boolean;
 };
 
@@ -40,8 +46,9 @@ export type LiveChunk = {
  * 마이크 샘플을 100ms 프레임으로 모으고 세 규칙으로 자른다:
  * min(4초) 을 넘긴 뒤 문장 쉼(600ms 무음) / target(10초) 을 넘긴 뒤 짧은 무음(300ms) / max(15초).
  * 시간축은 녹음된 샘플 수만 센다 (일시정지 구간은 없다).
- * 말소리와 무음은 잡음 바닥 기준으로 가른다(voiceDetector) — 입력이 작은 마이크에서도 쉼을 찾아 문장 사이에서 자른다.
+ * 말소리와 쉼은 목소리의 주기성으로 가른다(voiceDetector) — 입력이 작은 마이크에서도 쉼을 찾아 문장 사이에서 자른다.
  * 첫 말소리가 들리기 전의 무음은 프리롤 몇 프레임만 남기고 버린다 — 저장 파일과 타임스탬프가 말소리 직전에서 0초가 된다.
+ * 버리는 것은 맨 앞 3초까지다. 그 뒤로는 말소리 판정과 상관없이 모두 저장한다.
  */
 export class LiveChunker {
   private readonly frameSamples: number;
@@ -56,6 +63,7 @@ export class LiveChunker {
   /** 첫 말소리를 들었는지 — 그 전 프레임은 preRoll 링에만 잠시 둔다 */
   private started = false;
   private preRoll: Float32Array[] = [];
+  private leadingFrames = 0;
   private readonly detector: VoiceDetector = createVoiceDetector();
 
   constructor(
@@ -108,10 +116,11 @@ export class LiveChunker {
   private consumeFrame(frame: Float32Array, partial: boolean): void {
     const db = frameDb(frame);
     this.onLevel?.(10 ** (db / 20));
-    const voiced = this.detector.classify(db, (frame.length / this.options.sampleRate) * 1000);
+    const voiced = this.detector.classify(frame);
     this.frameFill = 0;
     if (!this.started) {
-      if (!voiced) {
+      this.leadingFrames += 1;
+      if (!voiced && this.leadingFrames < this.options.maxLeadingFrames) {
         // 아직 말소리 전: 프리롤 링에만 두고 시간축에는 넣지 않는다
         this.preRoll.push(frame.slice());
         if (this.preRoll.length > this.options.preRollFrames) this.preRoll.shift();
@@ -144,7 +153,7 @@ export class LiveChunker {
     const pcm = this.buffer.slice(0, this.length);
     const startMs = Math.round(this.emitted);
     this.emitted += ms;
-    this.onChunk({ index: this.index, startMs, endMs: Math.round(this.emitted), pcm, voiced: this.voicedFrames > 0 });
+    this.onChunk({ index: this.index, startMs, endMs: Math.round(this.emitted), pcm, voiced: this.voicedFrames >= MIN_VOICED_FRAMES });
     this.index += 1;
     this.length = 0;
     this.silentRun = 0;

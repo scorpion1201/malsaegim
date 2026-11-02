@@ -4,7 +4,7 @@ const FRAME_MS: usize = 100;
 /// 말소리 큰 쪽(프레임 RMS 상위 5%)을 이 크기에 맞춘다
 const TARGET_DB: f32 = -20.0;
 /// 키울 수 있는 상한
-const MAX_GAIN_DB: f32 = 42.0;
+const MAX_GAIN_DB: f32 = 40.0;
 /// 샘플 최대값 상한 — PCM16 에서 잘리지 않게 한다
 const PEAK_LIMIT: f32 = 0.95;
 /// 프레임 크기 변화폭이 이보다 작으면 말소리 없는 잡음으로 보고 키우지 않는다
