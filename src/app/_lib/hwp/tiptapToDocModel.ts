@@ -1,3 +1,4 @@
+import { speakerLabel } from '@/app/_lib/editor/blocksToTiptapDoc';
 import { formatTimestamp } from '@/app/_lib/time';
 import { DocModelError, type Block, type DocModel, type HeadingLevel, type Run } from './docModel';
 
@@ -27,6 +28,14 @@ const runsOf = (nodes: TiptapNode[] | undefined): Run[][] => {
        groups.push([]);
        } else if (node.type === 'timestamp') {
       // 내보내기에서는 버린다
+    } else if (node.type === 'speaker') {
+      const name = typeof node.attrs?.name === 'string' ? node.attrs.name : null;
+      groups[groups.length - 1].push({
+        text: `${speakerLabel(Number(node.attrs?.id ?? 0), name)}: `,
+        bold: true,
+        italic: false,
+        underline: false,
+      });
     } else if (node.type === 'failedChunk') {
       // 실패 조각은 문서에 자리표시 텍스트로 남긴다
       // 이어 붙인 파트는 파트 안 시각으로 적는다

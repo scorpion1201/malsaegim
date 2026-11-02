@@ -245,6 +245,61 @@
   color: var(--fg-2);
 }
 
+.speakerWrapper {
+  display: inline;
+}
+
+.speaker {
+  display: inline-block;
+  padding: 1px 7px;
+  margin-right: 8px;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--tone) 14%, transparent);
+  color: color-mix(in srgb, var(--tone) 70%, var(--fg));
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.6;
+  cursor: pointer;
+}
+
+.speaker:disabled {
+  cursor: default;
+}
+
+.speaker[data-tone='0'] {
+  --tone: #2f6fde;
+}
+
+.speaker[data-tone='1'] {
+  --tone: #2f9e6e;
+}
+
+.speaker[data-tone='2'] {
+  --tone: #d9702f;
+}
+
+.speaker[data-tone='3'] {
+  --tone: #9a4fd1;
+}
+
+.speaker[data-tone='4'] {
+  --tone: #c23f6b;
+}
+
+.speakerInput {
+  margin-right: 8px;
+  padding: 1px 6px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .timestampActive {
   background: var(--accent);
   color: var(--accent-fg);

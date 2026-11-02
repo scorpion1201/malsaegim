@@ -34,6 +34,16 @@ export const ON_DEVICE_SPLIT_OPTIONS: SplitOptions = {
   silenceDb: -40,
 };
 
+/**
+ * 화자 구분을 함께 돌리는 BYOK 분할 — 조각 글자에는 시각이 없어 한 조각 안의 화자는 시간 비례로만 나눌 수 있다.
+ * 조각을 실시간 녹음과 같은 길이로 줄여 조각 하나가 대개 한 사람의 말이 되게 한다.
+ */
+export const DIARIZED_SPLIT_OPTIONS: SplitOptions = {
+  targetSecs: 12,
+  maxSecs: 15,
+  silenceDb: -40,
+};
+
 /** 재인식용 추출 구간. endMs === null 은 "스트림 끝까지"(마지막 조각 규칙). */
 export type ExtractRange = {
   index: number;

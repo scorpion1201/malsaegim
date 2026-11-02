@@ -142,6 +142,22 @@ export const extractWavRanges = (
   };
 };
 
+/** PCM16 모노 WAV 들의 샘플을 이어 붙인다 — 화자 구분 입력. PCM16 이 아닌 조각은 건너뛴다 */
+export const wavsToPcm16 = (wavs: Uint8Array[]): Int16Array => {
+  const parts = wavs.flatMap((bytes) => {
+    const info = readWavInfo(bytes);
+    if (!info || info.bitsPerSample !== 16 || info.channels !== 1) return [];
+    return [bytes.subarray(info.dataOffset, info.dataOffset + info.dataBytes)];
+  });
+  const out = new Int16Array(parts.reduce((sum, part) => sum + part.length / 2, 0));
+  let offset = 0;
+  for (const part of parts) {
+    new Uint8Array(out.buffer, offset * 2, part.length).set(part);
+    offset += part.length / 2;
+  }
+  return out;
+};
+
 /** PCM16 WAV → Float32 샘플 (모노 기준; 다채널이면 첫 채널) — On-Device 엔진 입력 */
 export const wavToFloat32 = (bytes: Uint8Array): Float32Array => {
   const info = readWavInfo(bytes);

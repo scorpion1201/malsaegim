@@ -30,6 +30,10 @@ const NODE_ATTRS: Record<string, Record<string, AttrCheck>> = {
   // offset: 이어 붙인 파트의 시작 시각 — 화면에는 ms - offset 으로 보인다
   timestamp: { ms: isTime, offset: isTime },
   failedChunk: { startMs: isTime, endMs: isTime, offset: isTime },
+  speaker: {
+    id: (value) => Number.isInteger(value) && Number(value) >= 0,
+    name: (value) => value === null || (typeof value === 'string' && value.length <= 40),
+  },
 };
 
 const MARK_TYPES = new Set(['bold', 'italic', 'underline']);

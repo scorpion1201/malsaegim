@@ -13,6 +13,11 @@ export const timestampNode = (ms: number, offset = 0): TiptapNode => ({
   attrs: offset > 0 ? { ms, offset } : { ms },
 });
 
+/** 화자 표시 — 이름을 주면 이름, 없으면 "화자 N" */
+export const speakerLabel = (id: number, name: string | null): string => name || `화자 ${id + 1}`;
+
+export const speakerNode = (id: number): TiptapNode => ({ type: 'speaker', attrs: { id } });
+
 /** 이어 붙인 파트의 구분 제목 */
 export const partHeadingNode = (partNumber: number, label: string): TiptapNode => ({
   type: 'heading',
@@ -64,6 +69,7 @@ export const blocksToTiptapDoc = (blocks: TranscriptBlock[], languages?: BlockLa
             type: 'paragraph',
             content: [
               timestampNode(block.startMs + offsetMs, offsetMs),
+              ...(block.speaker === undefined ? [] : [speakerNode(block.speaker)]),
               block.failed
                 ? failedChunkNode(block.startMs + offsetMs, block.endMs + offsetMs, offsetMs)
                 : { type: 'text', text: block.text },

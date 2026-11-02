@@ -15,6 +15,14 @@ const RUNTIME = [
   { id: 'engine-webgpu-wasm', name: 'malsaegim-engine-webgpu.wasm' },
 ];
 
+// 화자 구분: onnxruntime-web 런타임과 임베딩 모델 — 런타임이 wasm 을 이름으로 찾으므로 한 디렉터리에 둔다
+const SPEAKER = [
+  { id: 'ort-js', name: 'ort.wasm.min.mjs' },
+  { id: 'ort-wasm-js', name: 'ort-wasm-simd-threaded.mjs' },
+  { id: 'ort-wasm', name: 'ort-wasm-simd-threaded.wasm' },
+  { id: 'speaker-model', name: 'speaker-campplus.onnx' },
+];
+
 // tier: full = PC·고사양 기기 기본, lite = 메모리가 부족한 기기 기본 (src/app/_lib/engine/deviceProfile.ts)
 // memoryMB: 모델을 올린 뒤 wasm 힙 실측치(Chromium, whisper.cpp v1.9.5) — 설정 화면 안내용
 const MODELS = [
@@ -72,9 +80,18 @@ for (const model of MODELS) {
   models.push({ ...info, engine: 'whisper', file });
 }
 
-const manifest = { schema: 2, runtime: { version: runtimeVersion, files: runtimeFiles }, models };
+const speakerFiles = [];
+for (const entry of SPEAKER) speakerFiles.push({ id: entry.id, ...(await describe(entry.name)) });
+const speakerVersion = createHash('sha256')
+  .update(speakerFiles.map((file) => file.sha256).join('\n'))
+  .digest('hex')
+  .slice(0, 12);
+for (const file of speakerFiles) file.url = await place(`speaker/${speakerVersion}`, file);
+
+const manifest = { schema: 2, runtime: { version: runtimeVersion, files: runtimeFiles }, models, speaker: { version: speakerVersion, files: speakerFiles } };
 await writeFile(join(out, 'manifest.json'), JSON.stringify(manifest, null, 2));
 for (const model of models) {
   console.log(`${model.id}: ${model.file.url} (${Math.round(model.file.bytes / 1048576)} MB)`);
 }
 console.log(`runtime ${runtimeVersion}: ${runtimeFiles.map((file) => file.name).join(', ')}`);
+console.log(`speaker ${speakerVersion}: ${speakerFiles.map((file) => file.name).join(', ')}`);

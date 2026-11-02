@@ -25,7 +25,8 @@
 │       ├── _components/    # Workspace, Editor, Translation, OnDevice, Settings 등 UI
 │       └── _lib/
 │           ├── asr/         # 인식 엔진 선택, 큐, 조립, BYOK 호출
-│           ├── audio/       # 분할 워커, 마이크, 청커, WAV, IndexedDB
+│           ├── audio/       # 분할 워커, 마이크, 음량 보정, 말소리 판정, 청커, WAV, IndexedDB
+│           ├── diarization/ # 화자 구분 워커, 특징 추출, 군집화, 말 차례
 │           ├── auth/        # 세션 서명·검증
 │           ├── editor/      # Tiptap 변환, 노트 저장
 │           ├── engine/      # malsaegim-engine 파사드, 워커, 모델 저장소
@@ -54,7 +55,7 @@
         +----------------------------+
         |
         v
-[Transcript Assembly] --> [Tiptap Editor] <--> [Browser Storage]
+[Speaker Diarization] --> [Transcript Assembly] --> [Tiptap Editor] <--> [Browser Storage]
                                  |
                                  v
                            [/api/export] --> [HWP/HWPX Download]
@@ -99,9 +100,11 @@
 
 - **위치:** `crates/audio-splitter`, `src/app/_lib/audio`
 - **실행:** 브라우저 Web Worker
-- **BYOK 분할:** 목표 225초, 최대 240초. 호출당 길이와 본문 크기를 제한하는 공급자에 맞춘 값이다.
+- **BYOK 분할:** 목표 225초, 최대 240초. 호출당 길이와 본문 크기를 제한하는 공급자에 맞춘 값이다. 서버에 화자 구분 런타임이 있으면 목표 12초, 최대 15초로 줄인다. 조각 글자에는 시각이 없어 조각이 짧아야 화자가 맞는다.
 - **On-Device 분할:** 목표 25초, 최대 30초. 조각마다 whisper 윈도우 하나가 되도록 해서 4~5배 느린 온도 폴백을 피한다.
 - **브라우저 분할 이유:** 원본을 서버에 올리지 않기 위해서다.
+- **무음 경계:** 문턱은 창의 잡음 바닥(하위 10% 프레임) + 10 dB 를 넘지 않는다. 작게 녹음된 파일은 전 구간이 -40 dB 아래라 고정 문턱으로는 쉼을 찾지 못한다.
+- **음량:** 조각마다 큰 소리(프레임 상위 5%)를 -20 dBFS 에 맞춰 게인 하나를 곱한다(최대 42 dB). 변화폭이 10 dB 안 되는 조각은 잡음으로 보고 키우지 않는다. whisper 의 log-mel 은 절대 크기 기준이다.
 
 #### 3.1.3. Recognition Engines and Queue
 
@@ -128,7 +131,10 @@
 #### 3.1.5. Recording
 
 - **위치:** `src/app/_lib/audio/{micCapture,liveChunker,wav,recordingStore}.ts`, `src/app/_components/Workspace/useLiveRecording.ts`
-- **조각 규칙:** 마이크를 AudioWorklet 으로 16kHz 로 받아 `LiveChunker` 가 100ms 프레임 RMS 로 무음을 본다. 문장 쉼(4초 이후 600ms 무음), 10초(목표, 300ms 무음), 15초(최대)에서 자른다. 첫 문장이 말한 지 수 초 안에 나타나게 하기 위한 값이다.
+- **입력:** 마이크를 AudioWorklet 으로 받아 저역 통과 후 16kHz 로 내린다(거르지 않으면 8kHz 위 잡음이 말소리 대역으로 접힌다).
+- **음량 보정:** `levelNormalizer` 가 100ms 프레임마다 말소리 크기를 추정해 -20 dBFS 로 키운다(최대 42 dB, 피크 제한). PCM16 으로 바꾸기 전에 키워 해상도를 지킨다. `autoGainControl` 을 켠 채 아이패드 내장 마이크로 녹음해도 말소리가 -55 dBFS 근처로 저장됐기 때문이다(iPad 에서 작아지는 원인은 확인하지 못했다). 저장 WAV 와 인식기는 보정된 같은 샘플을 받는다.
+- **말소리 판정:** `voiceDetector` 는 고정 문턱 대신 잡음 바닥과의 차이(12 dB, 말하는 중 6 dB, 200ms hangover)로 본다. 청커와 On-Device 실시간이 같은 판정을 쓴다.
+- **조각 규칙:** 문장 쉼(4초 이후 600ms 무음), 10초(목표, 300ms 무음), 15초(최대)에서 자른다. 첫 문장이 말한 지 수 초 안에 나타나게 하기 위한 값이다.
 - **문단:** 짧은 조각이 문단을 쪼개지 않도록 조립할 때 25초 안쪽의 연속 조각은 한 문단으로 합친다.
 - **시작 무음:** 첫 말소리 전 무음은 0.3초 프리롤만 남기고 버린다. 저장되는 WAV 와 타임스탬프는 말소리 직전을 0초로 시작한다.
 - **인식 전달:** 조각은 WAV 로 감싸 인식 큐로 보낸다. 전부 무음이거나 500ms 미만이면 보내지 않고 빈 결과로 채운다.
@@ -138,7 +144,17 @@
 - **파트 재생·재인식:** 원본은 `recordings` 에 `노트 id`(Part 1), `노트 id#N`(Part N) 으로 따로 둔다. 플레이어는 파트들을 하나처럼 이어 재생하고(타임스탬프를 누르면 그 파트로 넘어간다), 실패 조각은 그 파트 원본에서 파트 안 시각으로 잘라 다시 인식한다. 오디오 다운로드는 파트마다 파일 하나, 노트를 지우면 모든 파트 원본을 지운다.
 - **공통 원본:** 이 WAV 가 재생, 다운로드(`<제목>.wav`), 실패 조각 재인식(디코딩 없이 바이트 슬라이스)에 함께 쓰인다.
 
-#### 3.1.6. Realtime Translation
+#### 3.1.6. Speaker Diarization
+
+- **위치:** `src/app/_lib/diarization`, `src/app/_components/Editor/SpeakerNode.tsx`
+- **시점:** 받아쓰기가 끝난 뒤 저장 전에 워커에서 돈다(20초 미만, 번역 노트 제외). 실패해도 받아쓰기는 화자 표시 없이 저장한다.
+- **흐름:** 말소리 구간에서 1.5초 창을 0.75초 간격으로 밀며 80차 fbank → CAM++ 임베딩(192차) → 평균 연결 계층 군집(유사도 0.18에서 자름, 1% 미만 군집 제거, 중심점 재배정) → 5창 다수결 → 말 차례. 사람 수는 입력받지 않는다.
+- **런타임:** `/models/speaker/<해시>/` 의 onnxruntime-web(wasm, 스레드 최대 4)과 CAM++ 모델(28 MB). 앱 번들과 `package.json` 에 넣지 않고 Whisper 런타임처럼 URL 로 읽으며 HTTP 캐시에만 남는다. `WITH_MODELS=0` 이면 화자 구분은 꺼진다.
+- **글자 배정:** 조각 글자에는 시각이 없다. 3초 미만의 화자 구간은 조각의 다수 화자에 넘기고, 그 이상이면 글자를 시간 비례로 나눠 문장 끝이나 띄어쓰기에 맞춘다. 화자가 바뀌면 항상 문단을 나눈다.
+- **표시:** 문단 앞 `speaker` 인라인 노드(`id`, `name`). 누르면 이름을 바꾸고 같은 화자 전체에 적용된다. HWP/HWPX 에는 굵은 `이름: ` 으로 나간다. 이어 붙인 파트의 화자 번호는 파트마다 따로다.
+- **정확도:** 4인 회의 녹음 하나(아이패드 내장 마이크, 64분)로 문턱을 정했다. 사람이 매긴 정답이 없어 오류율은 재지 못했다. 겹쳐 말하면 큰 쪽 한 명으로 표시된다.
+
+#### 3.1.7. Realtime Translation
 
 - **위치:** `src/app/_lib/translation`, `src/app/_lib/settings/translationSettings.ts`, `src/app/_components/Translation`
 - **조각 나누기:** `translationRecognizer` 가 `LiveRecognizer` 를 구현해 `LiveChunker` 경계에서 원문·번역 델타를 `elapsed_ms` 로 나눈다.
@@ -314,6 +330,8 @@ Node 20+, Yarn 4, Rust stable, `wasm32-unknown-unknown`, wasm-pack 이 필요하
 ## 9. Future Considerations / Roadmap
 
 - **작은 소리 번역:** 작은 소리의 중국어가 인식되지 않는 문제의 원인을 아직 찾지 못했다.
+- **화자 구분 정확도:** 인원과 환경이 다른 녹음으로 군집 문턱을 다시 재야 한다. On-Device 파일 전사의 어절 시각을 쓰면 글자 배정이 더 정확해진다.
+- **아이패드 실기기 검증:** 음량 보정, 잡음 바닥 판정, 화자 구분을 iPad Safari 에서 돌려 확인해야 한다.
 - **번역 통합 시험:** 앱에서 번역, 녹음, 저장을 이어서 돌리는 시험, Wi-Fi 복구, 60분 세션 교대, 과금, HWP 외국어 표시를 시험하지 못했다.
 - **WebGPU 실기기 검증:** 개발 환경에 GPU 가 없어 WebGPU 경로의 속도·정확도는 검증하지 못했다(폴백만 검증).
 - **모바일 실기기 검증:** iPhone·iPad·Android 에서 Turbo 로딩과 실시간 처리 여부를 확인해야 한다.
@@ -327,7 +345,7 @@ Node 20+, Yarn 4, Rust stable, `wasm32-unknown-unknown`, wasm-pack 이 필요하
 
 **Primary Contact:** Seongwoo Park
 
-**Date of Last Update:** 2026-11-01
+**Date of Last Update:** 2026-11-02
 
 ## 11. Glossary / Acronyms
 
