@@ -20,7 +20,12 @@ export type WhisperModel = {
   engine: ModelEngine;
   file: ModelFile;
 };
-export type ModelManifest = { runtime: { version: string; files: ModelFile[] }; models: WhisperModel[] };
+export type ModelManifest = {
+  runtime: { version: string; files: ModelFile[] };
+  models: WhisperModel[];
+  /** 화자 구분 런타임(onnxruntime-web)과 임베딩 모델. HTTP 캐시로만 받아 Cache Storage 에 넣지 않는다 */
+  speaker?: { version: string; files: ModelFile[] };
+};
 /** 이 기기에 내려받는 묶음 — 엔진 런타임 + 모델 하나. key 가 바뀌면(엔진·모델 갱신, 모델 변경) 바뀐 파일만 다시 받는다 */
 export type ModelBundle = { key: string; model: WhisperModel; files: ModelFile[]; totalBytes: number };
 export type ModelProgress = { receivedBytes: number; totalBytes: number; etaSec: number | null };
@@ -88,7 +93,14 @@ export const fetchManifest = async (): Promise<ModelManifest | null> => {
   ) {
     throw new ModelNetworkError('manifest 형식이 잘못되었습니다');
   }
-  return { runtime: { version: runtime.version, files: runtime.files }, models: body.models };
+  const speaker = body.speaker;
+  return {
+    runtime: { version: runtime.version, files: runtime.files },
+    models: body.models,
+    ...(typeof speaker?.version === 'string' && Array.isArray(speaker.files) && speaker.files.every(isFile)
+      ? { speaker: { version: speaker.version, files: speaker.files } }
+      : {}),
+  };
 };
 
 export const bundleFor = (manifest: ModelManifest, model: WhisperModel): ModelBundle => {

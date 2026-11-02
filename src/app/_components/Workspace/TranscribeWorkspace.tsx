@@ -3,14 +3,16 @@
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { assembleTranscript, type ChunkMeta, type ChunkOutcome, type TranscriptBlock } from '@/app/_lib/asr/assembleTranscript';
+import { MIN_DIARIZE_MS, diarizeAudio, speakerRuntimeOf } from '@/app/_lib/diarization/diarize';
+import type { SpeakerTurn } from '@/app/_lib/diarization/speakerTurns';
 import type { EngineKind, TranscribeEngine } from '@/app/_lib/asr/asrEngine';
 import { selectEngine } from '@/app/_lib/asr/selectEngine';
 import { createTranscribeQueue, type TranscribeQueue } from '@/app/_lib/asr/transcribeQueue';
 import { sha256Hex } from '@/app/_lib/audio/fileHash';
 import { deleteRecording, deleteRecordingParts, getRecording, putRecording } from '@/app/_lib/audio/recordingStore';
 import { extractAudioRanges, splitAudioBuffer, type SplitHandle } from '@/app/_lib/audio/splitAudioFile';
-import { DEFAULT_SPLIT_OPTIONS, ON_DEVICE_SPLIT_OPTIONS, type AudioChunk, type ExtractRange, type SplitOptions } from '@/app/_lib/audio/types';
-import { extractWavRanges } from '@/app/_lib/audio/wav';
+import { DEFAULT_SPLIT_OPTIONS, DIARIZED_SPLIT_OPTIONS, ON_DEVICE_SPLIT_OPTIONS, type AudioChunk, type ExtractRange, type SplitOptions } from '@/app/_lib/audio/types';
+import { extractWavRanges, wavsToPcm16 } from '@/app/_lib/audio/wav';
 import { blocksToTiptapDoc, partHeadingNode, type BlockLanguages } from '@/app/_lib/editor/blocksToTiptapDoc';
 import { patchFailedParagraph, upgradeFailedPlaceholders } from '@/app/_lib/editor/patchTranscript';
 import {
@@ -332,10 +334,17 @@ export const TranscribeWorkspace = () => {
   const [appendKind, setAppendKind] = useState<'file' | 'recording' | null>(null);
   // 녹음 노트는 조각이 짧아(문장 쉼마다) 25초 안쪽의 연속 조각을 한 문단으로 합친다
   const liveNote = (appendKind ?? audioKindOf(activeProject?.audio)) === 'recording';
+  // 화자 구분 결과 — null 이면 아직 없거나 건너뛴다. 받으면 조립이 말 차례대로 문단을 나눈다
+  const [speakerTurns, setSpeakerTurns] = useState<SpeakerTurn[] | null>(null);
   const assembled = useMemo(
-    () => assembleTranscript(outcomes, expectedCount, liveNote ? LIVE_PARAGRAPH_MS : null),
-    [outcomes, expectedCount, liveNote],
+    () => assembleTranscript(outcomes, expectedCount, liveNote ? LIVE_PARAGRAPH_MS : null, speakerTurns),
+    [outcomes, expectedCount, liveNote, speakerTurns],
   );
+
+  /** 받아쓰기가 끝나면 화자 구분에 넘길 오디오 — 조각을 잇는 비용 때문에 그때 만든다 */
+  const speakerAudioRef = useRef<(() => Int16Array) | null>(null);
+  const diarizeAbortRef = useRef<AbortController | null>(null);
+  const [diarizing, setDiarizing] = useState(false);
 
   const refreshProjects = useCallback(() => {
     setProjects(listProjects(window.localStorage));
@@ -379,6 +388,39 @@ export const TranscribeWorkspace = () => {
       .catch(() => {});
   }, []);
 
+  /** 화자 구분 — 실패해도 받아쓰기 결과는 그대로 저장한다 */
+  const runDiarization = useCallback(
+    (audio: () => Int16Array) => {
+      const runtime = speakerRuntimeOf(modelRef.current.manifest);
+      const pcm = audio();
+      if (!runtime || (pcm.length / 16000) * 1000 < MIN_DIARIZE_MS) {
+        setDiarizing(false);
+        return;
+      }
+      const controller = new AbortController();
+      diarizeAbortRef.current = controller;
+      toast.update(TRANSCRIBE_TOAST, { title: '화자 구분 중…', description: undefined, progress: 0, meta: undefined });
+      diarizeAudio(
+        pcm,
+        runtime,
+        (ratio) => toast.update(TRANSCRIBE_TOAST, { title: '화자 구분 중…', progress: ratio * 100, meta: `${Math.round(ratio * 100)}%` }),
+        controller.signal,
+      )
+        .then((turns) => {
+          if (controller.signal.aborted) return;
+          setSpeakerTurns(turns);
+          setDiarizing(false);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          console.warn('[diarize]', error);
+          setDiarizing(false);
+          toast.show({ kind: 'info', title: '화자를 구분하지 못했습니다', description: '받아쓰기는 화자 표시 없이 저장합니다' });
+        });
+    },
+    [toast],
+  );
+
   // 조립 결과 → 에디터 + 진행 토스트 (새 인식 중에만)
   useEffect(() => {
     if (mode !== 'new' || (phase !== 'transcribing' && phase !== 'splitting' && phase !== 'recording')) return;
@@ -412,6 +454,15 @@ export const TranscribeWorkspace = () => {
   // 새 인식이 전부 끝나면 노트로 저장하고 검수 단계로
   useEffect(() => {
     if (mode !== 'new' || phase !== 'transcribing' || !assembled.complete) return;
+    // 화자 구분이 남아 있으면 먼저 끝낸다 — 결과가 들어오면 조립이 다시 돌고 이 효과가 다시 온다
+    const speakerAudio = speakerAudioRef.current;
+    if (speakerAudio) {
+      speakerAudioRef.current = null;
+      setDiarizing(true);
+      runDiarization(speakerAudio);
+      return;
+    }
+    if (diarizing) return;
     const append = appendRef.current;
     const doc =
       docRef.current ??
@@ -469,7 +520,7 @@ export const TranscribeWorkspace = () => {
       meta: undefined,
       duration: failed > 0 ? 8000 : 4000,
     });
-  }, [mode, phase, assembled, outcomes, title, setActive, persist, toast, attachAudio]);
+  }, [mode, phase, assembled, outcomes, title, setActive, persist, toast, attachAudio, diarizing, runDiarization]);
 
   // 최초 진입: 예전 단일 초안 마이그레이션 + 목록 로드 + 최근 노트 자동 열기
   useEffect(() => {
@@ -525,6 +576,11 @@ export const TranscribeWorkspace = () => {
   const stop = useCallback(() => {
     appendRef.current = null;
     setAppendKind(null);
+    speakerAudioRef.current = null;
+    diarizeAbortRef.current?.abort();
+    diarizeAbortRef.current = null;
+    setDiarizing(false);
+    setSpeakerTurns(null);
     splitRef.current?.cancel();
     queueRef.current?.abort();
     liveRecognizerRef.current?.terminate();
@@ -716,6 +772,8 @@ export const TranscribeWorkspace = () => {
         setExpectedCount(null);
         setDurationMs(null);
         setPhase('splitting');
+        // 화자 구분은 16 kHz 로 나뉜 조각을 다시 이어 쓴다 — 서버에 화자 런타임이 없으면 모으지 않는다
+        const speakerWavs: Uint8Array[] | null = speakerRuntimeOf(modelRef.current.manifest) ? [] : null;
         toast.show({ id: TRANSCRIBE_TOAST, kind: 'progress', title: '오디오를 나누는 중…', progress: 0 });
 
         const queue = makeQueue(engine, (outcome) =>
@@ -723,11 +781,12 @@ export const TranscribeWorkspace = () => {
         );
         queueRef.current = queue;
 
-        splitOptionsRef.current = engine.kind === 'ondevice' ? ON_DEVICE_SPLIT_OPTIONS : DEFAULT_SPLIT_OPTIONS;
+        splitOptionsRef.current = engine.kind === 'ondevice' ? ON_DEVICE_SPLIT_OPTIONS : speakerWavs ? DIARIZED_SPLIT_OPTIONS : DEFAULT_SPLIT_OPTIONS;
         const handle = splitAudioBuffer(
           buffer,
           (chunk) => {
             setPhase((current) => (current === 'splitting' ? 'transcribing' : current));
+            speakerWavs?.push(chunk.wav);
             queue.enqueue(chunk);
           },
           splitOptionsRef.current,
@@ -736,6 +795,7 @@ export const TranscribeWorkspace = () => {
 
         handle.done
           .then((summary) => {
+            if (speakerWavs) speakerAudioRef.current = () => wavsToPcm16(speakerWavs);
             setExpectedCount(summary.chunkCount);
             setDurationMs(summary.totalMs);
             pendingAudioRef.current = {
@@ -1621,6 +1681,10 @@ export const TranscribeWorkspace = () => {
         if (!appendRef.current) setTracksState(nextTracks(singleTrack(result.blob)));
         setDurationMs(result.durationMs);
         durationRef.current = result.durationMs;
+        if (!translating && speakerRuntimeOf(modelRef.current.manifest)) {
+          const bytes = new Uint8Array(await result.blob.arrayBuffer());
+          speakerAudioRef.current = () => wavsToPcm16([bytes]);
+        }
         const recognizer = liveRecognizerRef.current;
         if (recognizer) {
           // 마지막 세그먼트(finish 중 final)가 들어온 뒤에 기대 개수를 정한다

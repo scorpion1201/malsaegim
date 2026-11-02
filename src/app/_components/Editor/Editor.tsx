@@ -7,6 +7,7 @@ import type { TiptapDoc } from '@/app/_lib/hwp/tiptapToDocModel';
 import { formatTimestamp } from '@/app/_lib/time';
 import styles from './Editor.module.css';
 import { FailedChunkNode, RETRY_EVENT, type RetryEventDetail } from './FailedChunkNode';
+import { SpeakerNode } from './SpeakerNode';
 import { SEEK_EVENT, TimestampNode, type SeekEventDetail } from './TimestampNode';
 import { Toolbar } from './Toolbar';
 import { TranscriptRole } from './TranscriptRole';
@@ -68,6 +69,7 @@ export const Editor = ({
         gapcursor: false,
       }),
       TimestampNode,
+      SpeakerNode,
       FailedChunkNode,
       TranscriptRole,
     ],

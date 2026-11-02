@@ -9,6 +9,7 @@ WORK=${WORK:-/tmp/malsaegim-models}
 STAGE="$WORK/stage"
 mkdir -p "$STAGE"
 WORK="$WORK" sh "$HERE/fetch-whisper-models.sh" "$STAGE"
+WORK="$WORK" sh "$HERE/fetch-speaker-model.sh" "$STAGE"
 # 엔진 wasm (Rust 래퍼 + whisper.cpp) — bash 대신 Rust xtask 가 만든다
 ( cd "$ROOT" && cargo run -p malsaegim-engine --bin xtask --release -- "$STAGE" "$WORK/engine-src" )
 node "$HERE/write-manifest.mjs" "$STAGE" "$OUT"

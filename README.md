@@ -56,6 +56,7 @@ Most speech-to-text tools stop at a text file. In Korea, work often isn't finish
 - **Realtime translation:** Hear and read a live translation, with the original and translated text saved as paired paragraphs.
 - **On-device recognition:** Run Korean speech recognition in the browser with whisper.cpp and Whisper large-v3-turbo, without an API key. Live captions and file transcription share one model.
 - **Bring your own API:** Connect any OpenAI-compatible transcription endpoint.
+- **Speaker labels:** After dictation, voices are grouped in the browser and each paragraph is labeled by speaker. Click a label to set a name.
 - **HWP and HWPX export:** Set the paper size, margins, and fonts for each note, then download a native document.
 - **Made for daily use:** Autosave, audio playback, light and dark themes, and a responsive mobile layout are built in.
 
@@ -190,6 +191,7 @@ Realtime translation is new, and these areas still need work:
 
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for on-device recognition
 - [OpenAI Whisper](https://github.com/openai/whisper) large-v3-turbo and small, in the [whisper.cpp ggml distribution](https://huggingface.co/ggerganov/whisper.cpp)
+- [3D-Speaker](https://github.com/modelscope/3D-Speaker) CAM++ in the [sherpa-onnx distribution](https://github.com/k2-fsa/sherpa-onnx) and [ONNX Runtime Web](https://github.com/microsoft/onnxruntime) for speaker labels
 - [`@rhwp/core`](https://www.npmjs.com/package/@rhwp/core) for HWP and HWPX generation
 - [Tiptap](https://tiptap.dev) for the editor
 

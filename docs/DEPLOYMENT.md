@@ -155,7 +155,7 @@ docker --context prod image prune -f
 docker build --build-arg WITH_MODELS=0 -t malsaegim .
 ```
 
-모델을 넣으면 이미지가 ≈ 1.1 GB 커진다(Turbo q8_0 ≈ 834 MiB, small q8_0 ≈ 252 MiB, 엔진 wasm 두 벌 ≈ 6 MB). 서버에는 두 모델이 다 있지만 브라우저는 기기에 맞는 하나만 받는다.
+모델을 넣으면 이미지가 ≈ 1.1 GB 커진다(Turbo q8_0 ≈ 834 MiB, small q8_0 ≈ 252 MiB, 엔진 wasm 두 벌 ≈ 6 MB, 화자 구분 런타임·모델 ≈ 41 MiB). 서버에는 두 모델이 다 있지만 브라우저는 기기에 맞는 하나만 받는다. `WITH_MODELS=0` 이면 화자 구분도 꺼진다.
 
 ### 4.4. Image Contents
 
