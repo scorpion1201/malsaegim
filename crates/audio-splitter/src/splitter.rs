@@ -24,6 +24,8 @@ pub struct Splitter {
 
 const FRAME_MS: usize = 20;
 const SEARCH_BACK_SECS: f32 = 20.0;
+/// 무음 문턱은 창의 잡음 바닥(하위 10% 프레임)에서 이만큼 위를 넘지 않는다 — 작게 녹음된 파일은 전 구간이 silence_db 아래다
+const FLOOR_MARGIN_DB: f32 = 10.0;
 
 impl Splitter {
     pub fn new(cfg: SplitConfig, rate: u32) -> Self {
@@ -74,12 +76,15 @@ impl Splitter {
             .step_by(frame)
             .map(|s| (s, rms_db(&self.buf[s..s + frame])))
             .collect();
+        let mut levels: Vec<f32> = frames.iter().map(|(_, db)| *db).collect();
+        levels.sort_by(|a, b| a.total_cmp(b));
+        let threshold = self.cfg.silence_db.min(levels[levels.len() / 10] + FLOOR_MARGIN_DB);
 
         // 가장 긴 무음 런
         let mut best: Option<(usize, usize)> = None; // (run_start_frame_idx, run_len)
         let mut run_start = None;
         for (i, (_, db)) in frames.iter().enumerate() {
-            if *db <= self.cfg.silence_db {
+            if *db <= threshold {
                 if run_start.is_none() {
                     run_start = Some(i);
                 }
@@ -104,7 +109,7 @@ impl Splitter {
     }
 }
 
-fn rms_db(x: &[f32]) -> f32 {
+pub fn rms_db(x: &[f32]) -> f32 {
     let rms = (x.iter().map(|v| v * v).sum::<f32>() / x.len() as f32).sqrt();
     20.0 * (rms.max(1e-9)).log10()
 }
