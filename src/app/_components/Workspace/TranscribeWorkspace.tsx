@@ -408,6 +408,7 @@ export const TranscribeWorkspace = () => {
       )
         .then((turns) => {
           if (controller.signal.aborted) return;
+          console.debug(`[diarize] ${new Set(turns.map((turn) => turn.speaker)).size} speakers, ${turns.length} turns`);
           setSpeakerTurns(turns);
           setDiarizing(false);
         })
