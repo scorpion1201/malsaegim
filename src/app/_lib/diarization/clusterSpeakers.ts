@@ -5,8 +5,19 @@
  */
 /** 평균 유사도가 이 값 이상이면 같은 화자로 묶는다 — 먼 거리 마이크의 CAM++ 임베딩 기준 */
 const MERGE_THRESHOLD = 0.18;
+/**
+ * 큰 두 묶음은 이 값 아래면 합치지 않는다 — 잡음 창 몇 개의 이상값은 작은 쪽이 작다. 스피커로 튼 두 목소리는 큰 묶음끼리
+ * 0.2 근처에서 합쳐졌고, 한 목소리와 빈 방은 큰 두 묶음으로 갈리지 않았다
+ */
+const BALANCED_THRESHOLD = 0.3;
+/** 큰 묶음으로 치는 비율 — 작은 쪽이 전체 창에서 이만큼 이상이어야 한다 */
+const BALANCED_SHARE = 0.2;
+/** 진단 로그에 남기는 마지막 병합 수 */
+const LOGGED_MERGES = 8;
 /** 전체 창에서 이 비율보다 작은 군집은 화자로 치지 않는다 (기침·물건 소리·겹친 말) */
 const MIN_CLUSTER_SHARE = 0.01;
+/** 이보다 창이 적은 군집은 화자로 치지 않는다 — 짧은 녹음에서는 비율 기준이 한 창이 된다 */
+const MIN_CLUSTER_WINDOWS = 3;
 /** 군집 중심끼리 이 값 이상 비슷하면 한 화자다 */
 const CENTROID_MERGE_SIMILARITY = 0.6;
 /** 중심점 재배정 횟수 */
@@ -14,7 +25,8 @@ const REFINE_ROUNDS = 5;
 /** 계층 군집에 넣는 창의 상한 — 메모리가 창 수의 제곱이다 (4000개면 64 MB). 넘으면 간격을 두고 뽑고 나머지는 재배정이 맡는다 */
 const MAX_CLUSTER_WINDOWS = 4000;
 
-type Merge = { a: number; b: number; similarity: number };
+/** smaller: 합쳐지는 두 묶음 중 작은 쪽의 창 수 */
+type Merge = { a: number; b: number; similarity: number; smaller: number };
 
 const similarityMatrix = (embeddings: Float32Array, dim: number, picks: number[]): Float32Array => {
   const n = picks.length;
@@ -60,6 +72,7 @@ const averageLinkage = (matrix: Float32Array, n: number): Merge[] => {
     }
     chain.length -= 2;
     const b = previous;
+    const smaller = Math.min(size[a], size[b]);
     const total = size[a] + size[b];
     for (let j = 0; j < n; j += 1) {
       if (!alive[j] || j === a || j === b) continue;
@@ -69,19 +82,22 @@ const averageLinkage = (matrix: Float32Array, n: number): Merge[] => {
     }
     alive[b] = 0;
     size[a] = total;
-    merges.push({ a, b, similarity: bestSimilarity });
+    merges.push({ a, b, similarity: bestSimilarity, smaller });
   }
   return merges;
 };
 
-const cutTree = (merges: Merge[], n: number, threshold: number): Int32Array => {
+const cutTree = (merges: Merge[], n: number): Int32Array => {
   const parent = Int32Array.from({ length: n }, (_, i) => i);
   const find = (x: number): number => {
     let root = x;
     while (parent[root] !== root) root = parent[root];
     return root;
   };
-  for (const { a, b, similarity } of merges) if (similarity >= threshold) parent[find(b)] = find(a);
+  const balanced = n * BALANCED_SHARE;
+  for (const { a, b, similarity, smaller } of merges) {
+    if (similarity >= (smaller >= balanced ? BALANCED_THRESHOLD : MERGE_THRESHOLD)) parent[find(b)] = find(a);
+  }
   return Int32Array.from({ length: n }, (_, i) => find(i));
 };
 
@@ -154,9 +170,16 @@ export const clusterSpeakers = (embeddings: Float32Array, dim: number): Int32Arr
   if (count === 0) return new Int32Array(0);
   const stride = Math.ceil(count / MAX_CLUSTER_WINDOWS);
   const picks = Array.from({ length: Math.ceil(count / stride) }, (_, i) => i * stride);
-  const tree = cutTree(averageLinkage(similarityMatrix(embeddings, dim, picks), picks.length), picks.length, MERGE_THRESHOLD);
+  const merges = averageLinkage(similarityMatrix(embeddings, dim, picks), picks.length);
+  const lastMerges = merges
+    .map((merge) => merge.similarity)
+    .sort((a, b) => a - b)
+    .slice(0, LOGGED_MERGES)
+    .map((similarity) => similarity.toFixed(3));
+  console.debug(`[diarize] ${count} windows, lowest merges ${lastMerges.join(' ')}`);
+  const tree = cutTree(merges, picks.length);
 
-  const minSize = Math.max(1, Math.ceil(picks.length * MIN_CLUSTER_SHARE));
+  const minSize = Math.max(MIN_CLUSTER_WINDOWS, Math.ceil(picks.length * MIN_CLUSTER_SHARE));
   const kept = [...groupBy(tree).values()].filter((members) => members.length >= minSize).map((members) => members.map((member) => picks[member]));
   if (kept.length === 0) return new Int32Array(count);
 

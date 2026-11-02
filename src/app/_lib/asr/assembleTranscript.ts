@@ -88,6 +88,13 @@ export const assembleTranscript = (
       }
     readyCount += 1;
     }
+  // 화자 번호는 문서에 나타난 순서로 다시 매긴다 — 말 차례를 글자에 배정하는 동안 앞 번호 화자가 사라지면 "화자 2" 부터 보인다
+  const speakerOrder = new Map<number, number>();
+  for (const block of blocks) {
+    if (block.speaker === undefined) continue;
+    if (!speakerOrder.has(block.speaker)) speakerOrder.set(block.speaker, speakerOrder.size);
+    block.speaker = speakerOrder.get(block.speaker);
+  }
   return {
     blocks,
     readyCount,
