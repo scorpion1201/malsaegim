@@ -1,3 +1,5 @@
+import { createLevelNormalizer } from './levelNormalizer';
+
 export type MicCapture = {
   /** 실제 AudioContext 샘플레이트 — 16000 이 아니면 호출자가 리샘플한다 */
   sampleRate: number;
@@ -50,17 +52,56 @@ export const resampleLinear = (input: Float32Array, fromRate: number, toRate: nu
   return out;
 };
 
+/** 저역 통과 필터의 한쪽 길이(탭) — 48kHz 에서 약 1.3ms */
+const FILTER_HALF_TAPS = 31;
+
+/** 해닝 창을 씌운 싱크 저역 통과 필터. cutoff 는 입력 나이퀴스트 대비 비율 */
+const lowPassKernel = (cutoff: number): Float32Array => {
+  const kernel = new Float32Array(FILTER_HALF_TAPS * 2 + 1);
+  let sum = 0;
+  for (let n = -FILTER_HALF_TAPS; n <= FILTER_HALF_TAPS; n += 1) {
+    const x = Math.PI * cutoff * n;
+    const sinc = n === 0 ? 1 : Math.sin(x) / x;
+    const window = 0.5 + 0.5 * Math.cos((Math.PI * n) / (FILTER_HALF_TAPS + 1));
+    kernel[n + FILTER_HALF_TAPS] = sinc * window;
+    sum += sinc * window;
+  }
+  return kernel.map((value) => value / sum);
+};
+
+/** 블록을 이어 가며 거르는 FIR 필터 — 앞 블록 끝의 샘플을 들고 있어 경계가 끊기지 않는다 */
+const createLowPass = (cutoff: number): ((input: Float32Array) => Float32Array) => {
+  const kernel = lowPassKernel(cutoff);
+  let history = new Float32Array(kernel.length - 1);
+  return (input) => {
+    const joined = new Float32Array(history.length + input.length);
+    joined.set(history);
+    joined.set(input, history.length);
+    const out = new Float32Array(input.length);
+    for (let i = 0; i < out.length; i += 1) {
+      let sum = 0;
+      for (let k = 0; k < kernel.length; k += 1) sum += joined[i + k] * kernel[k];
+      out[i] = sum;
+    }
+    history = joined.slice(input.length);
+    return out;
+  };
+};
+
 /**
  * 연속(상태 유지) 선형 리샘플러. 블록마다 소수 위치와 직전 샘플을 이어받아 경계에서 샘플이 빠지거나
  * 위상이 튀지 않는다 — 실시간 마이크 스트림을 끊김 없이 16kHz 로 내리는 데 쓴다.
+ * 내릴 때는 먼저 저역 통과로 거른다 — 안 거르면 새 나이퀴스트 위의 잡음이 말소리 대역으로 접혀 들어온다(앨리어싱).
  */
 export const createResampler = (fromRate: number, toRate: number): ((input: Float32Array) => Float32Array) => {
   if (fromRate === toRate) return (input) => input;
   const ratio = fromRate / toRate;
+  const filter = ratio > 1 ? createLowPass(0.9 / ratio) : (input: Float32Array) => input;
   let pos = 0; // 가상 배열 [prev, ...input] 기준 읽기 위치
   let prev = 0; // 직전 블록의 마지막 샘플 (가상 인덱스 0)
-  return (input: Float32Array): Float32Array => {
-    if (input.length === 0) return input;
+  return (raw: Float32Array): Float32Array => {
+    if (raw.length === 0) return raw;
+    const input = filter(raw);
     const out: number[] = [];
     const at = (idx: number): number => (idx === 0 ? prev : input[idx - 1]);
     const vlen = input.length + 1;
@@ -106,6 +147,8 @@ export const startMicCapture = async (onSamples: (samples: Float32Array) => void
   let paused = false;
   // 네이티브 레이트 → 16kHz 연속 리샘플 (호출자는 항상 16kHz 를 받는다)
   const resample = createResampler(context.sampleRate, OUTPUT_SAMPLE_RATE);
+  // 입력 크기를 고르게 맞춘다 — 저장 WAV 와 인식기가 같은 샘플을 받는다
+  const normalize = createLevelNormalizer(OUTPUT_SAMPLE_RATE);
   // 리샘플 출력을 100ms 프레임으로 모아서 넘긴다 (워커 호출 빈도를 낮춰 실시간 유지)
   let acc = new Float32Array(0);
   const deliver = (samples: Float32Array) => {
@@ -117,7 +160,7 @@ export const startMicCapture = async (onSamples: (samples: Float32Array) => void
     merged.set(out, acc.length);
     let off = 0;
     while (merged.length - off >= OUTPUT_FRAME) {
-      onSamples(merged.slice(off, off + OUTPUT_FRAME));
+      onSamples(normalize(merged.subarray(off, off + OUTPUT_FRAME)));
       off += OUTPUT_FRAME;
     }
     acc = merged.slice(off);
