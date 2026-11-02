@@ -12,6 +12,7 @@
  * 무음: 말소리가 없는 동안은 인식하지 않는다 (환각 방지·전력).
  * 종료: finish 는 남은 말소리를 모두 flush 한 뒤 끝난다. terminate 뒤 도착한 결과는 버린다.
  */
+import { createVoiceDetector, frameDb } from '@/app/_lib/audio/voiceDetector';
 import type { LiveSegment } from './liveTypes';
 import type { LiveWord } from './whisperProtocol';
 
@@ -54,15 +55,6 @@ const IDLE_REPORT_MS = 500;
 /** 마지막 발화를 기다리는 시간: 기본 + 남은 오디오의 배수 (느린 기기에서 긴 창 하나에 수십 초) */
 const FINISH_BASE_MS = 60_000;
 const FINISH_PER_AUDIO = 4;
-/** 말소리 판정 — 잡음 바닥보다 SPEECH_MARGIN_DB 크고 SPEECH_MIN_DB 이상이면 말이 시작된다 */
-const SPEECH_MIN_DB = -55;
-const SPEECH_MARGIN_DB = 12;
-/** 말하는 중에는 문턱을 낮춰 작게 끝나는 어미("~습니다")를 무음으로 자르지 않는다 (히스테리시스) */
-const SPEECH_HOLD_MARGIN_DB = 6;
-/** 소리가 문턱 아래로 내려가도 이만큼은 말소리로 친다 (hangover) */
-const SPEECH_HANGOVER_MS = 200;
-/** 잡음 바닥이 올라가는 속도 (프레임당 dB) — 내려가는 것은 즉시 */
-const FLOOR_RISE_DB = 0.05;
 
 type Word = { t0: number; t1: number; text: string };
 type Mark = { endMs: number; speech: boolean };
@@ -122,9 +114,7 @@ export const createLiveSession = (recognize: Recognize, handlers: LiveSessionHan
   let bufStartMs = 0;
   /** 받은 오디오 끝 시각 */
   let totalMs = 0;
-  let noiseFloorDb = -70;
-  let speaking = false;
-  let hangoverMs = 0;
+  const detector = createVoiceDetector();
   /** 직전 부분 인식의 미확정 어절 (녹음 시각) */
   let hypothesis: Word[] = [];
   /** 확정했지만 아직 문장으로 내보내지 않은 어절 */
@@ -444,25 +434,6 @@ export const createLiveSession = (recognize: Recognize, handlers: LiveSessionHan
     if (totalMs - lastPassEndMs >= STEP_MS && bufferMs() >= MIN_WINDOW_MS) run(totalMs, false);
   }
 
-  const isSpeech = (samples: Float32Array, frameMs: number): boolean => {
-    let energy = 0;
-    for (let i = 0; i < samples.length; i += 1) energy += samples[i] * samples[i];
-    const db = 20 * Math.log10(Math.sqrt(energy / Math.max(1, samples.length)) + 1e-9);
-    noiseFloorDb = db < noiseFloorDb ? db : noiseFloorDb + FLOOR_RISE_DB;
-    const margin = speaking ? SPEECH_HOLD_MARGIN_DB : SPEECH_MARGIN_DB;
-    if (db >= Math.max(SPEECH_MIN_DB, noiseFloorDb + margin)) {
-      speaking = true;
-      hangoverMs = SPEECH_HANGOVER_MS;
-      return true;
-    }
-    if (speaking && hangoverMs > 0) {
-      hangoverMs -= frameMs;
-      return true;
-    }
-    speaking = false;
-    return false;
-  };
-
   return {
     push: (samples) => {
       if (closed || finishing) return;
@@ -470,7 +441,7 @@ export const createLiveSession = (recognize: Recognize, handlers: LiveSessionHan
       chunks.push(samples.slice());
       totalMs += frameMs;
       stats.audioMs = totalMs;
-      marks.push({ endMs: totalMs, speech: isSpeech(samples, frameMs) });
+      marks.push({ endMs: totalMs, speech: detector.classify(frameDb(samples), frameMs) });
       // 말소리가 없으면 프리롤만 남긴다 — 무음은 인식하지 않는다. 버린 오디오의 미확정 결과도 버리고, 확정한 어절은 내보낸다
       if (!inflight && !hasSpeechAfter(bufStartMs) && bufferMs() > PREROLL_MS * 2) {
         hypothesis = [];
