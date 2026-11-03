@@ -28,9 +28,9 @@ export type ClusterParams = {
 
 export const CLUSTER_PARAMS: ClusterParams = {
   method: 'ahc',
-  mergeThreshold: 0.18,
-  balancedThreshold: 0.3,
-  balancedShare: 0.2,
+  mergeThreshold: 0.38,
+  balancedThreshold: 0.35,
+  balancedShare: 0.3,
   minClusterWindows: 3,
   centroidMergeSimilarity: 0.6,
   oneSpeakerSimilarity: 1,
