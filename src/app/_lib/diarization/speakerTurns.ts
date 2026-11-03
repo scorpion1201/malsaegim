@@ -8,6 +8,8 @@ const SMOOTH_RADIUS = 2;
 const MIN_TURN_MS = 1000;
 /** 조각 안에서 이보다 짧은 화자 구간은 나누지 않는다 — 조각은 쉼에서 잘려 대개 한 사람 말이고, 글자를 시간 비례로 나누는 오차가 이만큼 크다 */
 const MIN_SPAN_MS = 3000;
+/** 화자가 바뀌는 경계에서 이 거리 안에 겹침이 시작되면 경계를 그 시각으로 옮긴다 — 끼어든 사람의 차례는 겹침에서 열린다 */
+const OVERLAP_SNAP_MS = 1000;
 /** 나눌 자리를 찾는 범위 — 글자 수 대비 */
 const SNAP_RATIO = 0.2;
 
@@ -43,8 +45,35 @@ const absorbShortTurns = (turns: SpeakerTurn[]): SpeakerTurn[] => {
   return mergeSameSpeaker(kept);
 };
 
-/** 창 시작 시각(ms)과 창별 화자로 시간축 전체를 빈틈없이 덮는 차례 목록을 만든다. 창 사이 무음은 앞뒤 화자가 반씩 가진다 */
-export const buildSpeakerTurns = (windowStartMs: number[], labels: ArrayLike<number>, windowMs: number, totalMs: number): SpeakerTurn[] => {
+/** 경계마다 가까운 겹침 시작으로 옮긴다. 앞뒤 경계를 넘지 않는다 */
+const snapToOverlaps = (turns: SpeakerTurn[], overlapStartsMs: number[]): SpeakerTurn[] => {
+  if (!overlapStartsMs.length) return turns;
+  for (let i = 1; i < turns.length; i += 1) {
+    const boundary = turns[i].startMs;
+    let best: number | null = null;
+    for (const start of overlapStartsMs) {
+      const distance = Math.abs(start - boundary);
+      if (distance <= OVERLAP_SNAP_MS && (best === null || distance < Math.abs(best - boundary))) best = start;
+    }
+    if (best !== null && best > turns[i - 1].startMs && best < turns[i].endMs) {
+      turns[i - 1].endMs = best;
+      turns[i].startMs = best;
+    }
+  }
+  return turns;
+};
+
+/**
+ * 창 시작 시각(ms)과 창별 화자로 시간축 전체를 빈틈없이 덮는 차례 목록을 만든다. 창 사이 무음은 앞뒤 화자가 반씩 가진다.
+ * overlapStartsMs: 말소리 분류 모델이 찾은 겹침 시작 시각 — 차례 경계를 거기로 옮긴다
+ */
+export const buildSpeakerTurns = (
+  windowStartMs: number[],
+  labels: ArrayLike<number>,
+  windowMs: number,
+  totalMs: number,
+  overlapStartsMs: number[] = [],
+): SpeakerTurn[] => {
   if (windowStartMs.length === 0) return [];
   const smoothed = smooth(labels);
   const centers = windowStartMs.map((start) => start + windowMs / 2);
@@ -53,7 +82,11 @@ export const buildSpeakerTurns = (windowStartMs: number[], labels: ArrayLike<num
     endMs: index === centers.length - 1 ? totalMs : (center + centers[index + 1]) / 2,
     speaker: smoothed[index],
   }));
-  return absorbShortTurns(mergeSameSpeaker(turns)).map((turn) => ({ ...turn, startMs: Math.round(turn.startMs), endMs: Math.round(turn.endMs) }));
+  return snapToOverlaps(absorbShortTurns(mergeSameSpeaker(turns)), overlapStartsMs).map((turn) => ({
+    ...turn,
+    startMs: Math.round(turn.startMs),
+    endMs: Math.round(turn.endMs),
+  }));
 };
 
 /** 나눌 자리 — target 근처의 문장 끝, 없으면 띄어쓰기. 없으면 null */

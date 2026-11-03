@@ -3,23 +3,47 @@
  * 사람 수를 미리 받지 않는다. 평균 연결 계층 군집을 문턱에서 자르고, 아주 작은 군집은 흩어 가까운 화자에 넣은 뒤,
  * 중심점 재배정으로 경계를 다듬는다.
  */
-/** 평균 유사도가 이 값 이상이면 같은 화자로 묶는다 — 먼 거리 마이크의 CAM++ 임베딩 기준 */
-const MERGE_THRESHOLD = 0.18;
+import { spectralCluster } from './spectralCluster';
+
 /**
- * 큰 두 묶음은 이 값 아래면 합치지 않는다 — 잡음 창 몇 개의 이상값은 작은 쪽이 작다. 스피커로 튼 두 목소리는 큰 묶음끼리
- * 0.2 근처에서 합쳐졌고, 한 목소리와 빈 방은 큰 두 묶음으로 갈리지 않았다
+ * 묶기 방식과 값 — scripts/diarization/tune-cluster.mjs 가 검증셋에서 고른다.
+ * mergeThreshold: 평균 유사도가 이 값 이상이면 같은 화자 (평균 연결)
+ * balancedThreshold / balancedShare: 작은 쪽이 전체의 balancedShare 이상인 큰 두 묶음은 balancedThreshold 아래면 합치지 않는다
+ * minClusterWindows: 이보다 창이 적은 묶음은 화자로 치지 않는다
+ * centroidMergeSimilarity: 묶음 중심끼리 이 값 이상 비슷하면 한 화자
+ * oneSpeakerSimilarity: (nme) 평균 유사도가 이 값 이상이면 한 사람
+ * shortSpeechMs / shortSplitSimilarity: 말소리 총량이 shortSpeechMs 미만이면 중심 유사도가 shortSplitSimilarity 이상인 화자를 합친다
  */
-const BALANCED_THRESHOLD = 0.3;
-/** 큰 묶음으로 치는 비율 — 작은 쪽이 전체 창에서 이만큼 이상이어야 한다 */
-const BALANCED_SHARE = 0.2;
+export type ClusterParams = {
+  method: 'ahc' | 'nme';
+  mergeThreshold: number;
+  balancedThreshold: number;
+  balancedShare: number;
+  minClusterWindows: number;
+  centroidMergeSimilarity: number;
+  oneSpeakerSimilarity: number;
+  shortSpeechMs: number;
+  shortSplitSimilarity: number;
+};
+
+export const CLUSTER_PARAMS: ClusterParams = {
+  method: 'ahc',
+  mergeThreshold: 0.18,
+  balancedThreshold: 0.3,
+  balancedShare: 0.2,
+  minClusterWindows: 3,
+  centroidMergeSimilarity: 0.6,
+  oneSpeakerSimilarity: 1,
+  shortSpeechMs: 10_000,
+  shortSplitSimilarity: 1,
+};
+
+/** 화자 수 상한 — 이보다 많이 나뉘면 가장 비슷한 화자부터 합친다 */
+export const MAX_SPEAKERS = 8;
 /** 진단 로그에 남기는 마지막 병합 수 */
 const LOGGED_MERGES = 8;
 /** 전체 창에서 이 비율보다 작은 군집은 화자로 치지 않는다 (기침·물건 소리·겹친 말) */
 const MIN_CLUSTER_SHARE = 0.01;
-/** 이보다 창이 적은 군집은 화자로 치지 않는다 — 짧은 녹음에서는 비율 기준이 한 창이 된다 */
-const MIN_CLUSTER_WINDOWS = 3;
-/** 군집 중심끼리 이 값 이상 비슷하면 한 화자다 */
-const CENTROID_MERGE_SIMILARITY = 0.6;
 /** 중심점 재배정 횟수 */
 const REFINE_ROUNDS = 5;
 /** 계층 군집에 넣는 창의 상한 — 메모리가 창 수의 제곱이다 (4000개면 64 MB). 넘으면 간격을 두고 뽑고 나머지는 재배정이 맡는다 */
@@ -87,16 +111,16 @@ const averageLinkage = (matrix: Float32Array, n: number): Merge[] => {
   return merges;
 };
 
-const cutTree = (merges: Merge[], n: number): Int32Array => {
+const cutTree = (merges: Merge[], n: number, params: ClusterParams): Int32Array => {
   const parent = Int32Array.from({ length: n }, (_, i) => i);
   const find = (x: number): number => {
     let root = x;
     while (parent[root] !== root) root = parent[root];
     return root;
   };
-  const balanced = n * BALANCED_SHARE;
+  const balanced = n * params.balancedShare;
   for (const { a, b, similarity, smaller } of merges) {
-    if (similarity >= (smaller >= balanced ? BALANCED_THRESHOLD : MERGE_THRESHOLD)) parent[find(b)] = find(a);
+    if (similarity >= (smaller >= balanced ? params.balancedThreshold : params.mergeThreshold)) parent[find(b)] = find(a);
   }
   return Int32Array.from({ length: n }, (_, i) => find(i));
 };
@@ -142,14 +166,14 @@ const groupBy = (labels: ArrayLike<number>): Map<number, number[]> => {
   return groups;
 };
 
-/** 중심이 서로 비슷한 군집을 합쳐 줄어든 중심 목록을 돌려준다 */
-const mergeCentroids = (embeddings: Float32Array, dim: number, labels: Int32Array): Float32Array[] => {
+/** 중심이 threshold 이상 비슷한 군집과, MAX_SPEAKERS 를 넘는 군집을 합쳐 줄어든 중심 목록을 돌려준다 */
+const mergeCentroids = (embeddings: Float32Array, dim: number, labels: Int32Array, threshold: number): Float32Array[] => {
   for (;;) {
     const groups = groupBy(labels);
     const ids = [...groups.keys()];
     const centroids = centroidsOf(embeddings, dim, groups.values());
     let pair: [number, number] | null = null;
-    let best = CENTROID_MERGE_SIMILARITY;
+    let best = ids.length > MAX_SPEAKERS ? -Infinity : threshold;
     for (let i = 0; i < ids.length; i += 1) {
       for (let j = i + 1; j < ids.length; j += 1) {
         const similarity = cosine(centroids[i], centroids[j]);
@@ -164,22 +188,30 @@ const mergeCentroids = (embeddings: Float32Array, dim: number, labels: Int32Arra
   }
 };
 
-/** 창별 화자 번호(0부터, 먼저 말한 사람이 0). 창이 없으면 빈 배열 */
-export const clusterSpeakers = (embeddings: Float32Array, dim: number): Int32Array => {
+/** 창별 화자 번호(0부터, 먼저 말한 사람이 0). 창이 없으면 빈 배열. speechMs: 녹음의 말소리 총량 */
+export const clusterWith = (embeddings: Float32Array, dim: number, speechMs: number, params: ClusterParams): Int32Array => {
   const count = embeddings.length / dim;
   if (count === 0) return new Int32Array(0);
   const stride = Math.ceil(count / MAX_CLUSTER_WINDOWS);
   const picks = Array.from({ length: Math.ceil(count / stride) }, (_, i) => i * stride);
-  const merges = averageLinkage(similarityMatrix(embeddings, dim, picks), picks.length);
-  const lastMerges = merges
-    .map((merge) => merge.similarity)
-    .sort((a, b) => a - b)
-    .slice(0, LOGGED_MERGES)
-    .map((similarity) => similarity.toFixed(3));
-  console.debug(`[diarize] ${count} windows, lowest merges ${lastMerges.join(' ')}`);
-  const tree = cutTree(merges, picks.length);
+  let tree: Int32Array;
+  if (params.method === 'nme') {
+    const picked = new Float32Array(picks.length * dim);
+    picks.forEach((window, i) => picked.set(embeddings.subarray(window * dim, (window + 1) * dim), i * dim));
+    tree = spectralCluster(picked, dim, MAX_SPEAKERS, params.oneSpeakerSimilarity);
+    console.debug(`[diarize] ${count} windows, spectral ${new Set(tree).size} groups`);
+  } else {
+    const merges = averageLinkage(similarityMatrix(embeddings, dim, picks), picks.length);
+    const lastMerges = merges
+      .map((merge) => merge.similarity)
+      .sort((a, b) => a - b)
+      .slice(0, LOGGED_MERGES)
+      .map((similarity) => similarity.toFixed(3));
+    console.debug(`[diarize] ${count} windows, lowest merges ${lastMerges.join(' ')}`);
+    tree = cutTree(merges, picks.length, params);
+  }
 
-  const minSize = Math.max(MIN_CLUSTER_WINDOWS, Math.ceil(picks.length * MIN_CLUSTER_SHARE));
+  const minSize = Math.max(params.minClusterWindows, Math.ceil(picks.length * MIN_CLUSTER_SHARE));
   const kept = [...groupBy(tree).values()].filter((members) => members.length >= minSize).map((members) => members.map((member) => picks[member]));
   if (kept.length === 0) return new Int32Array(count);
 
@@ -187,9 +219,13 @@ export const clusterSpeakers = (embeddings: Float32Array, dim: number): Int32Arr
   const labels = new Int32Array(count);
   for (let round = 0; round < REFINE_ROUNDS; round += 1) {
     for (let window = 0; window < count; window += 1) labels[window] = nearest(embeddings, dim, window, centroids);
-    centroids = mergeCentroids(embeddings, dim, labels);
+    centroids = mergeCentroids(embeddings, dim, labels, params.centroidMergeSimilarity);
   }
   for (let window = 0; window < count; window += 1) labels[window] = nearest(embeddings, dim, window, centroids);
+  if (speechMs < params.shortSpeechMs && centroids.length > 1) {
+    centroids = mergeCentroids(embeddings, dim, labels, params.shortSplitSimilarity);
+    for (let window = 0; window < count; window += 1) labels[window] = nearest(embeddings, dim, window, centroids);
+  }
 
   const order = new Map<number, number>();
   return labels.map((label) => {

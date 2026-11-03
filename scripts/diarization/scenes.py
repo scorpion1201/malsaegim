@@ -204,9 +204,18 @@ def interrupt(builder, voices, rng, start_s, end_s, cut):
         at = conversation(builder, voices, rng, at / SAMPLE_RATE, at / SAMPLE_RATE + rng.uniform(3, 10))
 
 
+def speed(samples, factor):
+    """빠르기·높낮이를 함께 바꾼다 (선형 보간 재표본화)"""
+    positions = np.arange(0, len(samples) - 1, factor)
+    return np.interp(positions, np.arange(len(samples)), samples)
+
+
 def zeroth_voice(speaker, gain_db, rng, split, far=False, dry=False):
     def say(r):
         samples = utterance(speaker, r)
+        # 학습 장면만 — Zeroth 115명의 높낮이(100~286 Hz) 밖 목소리를 덮는다. val·평가 장면은 그대로
+        if split == 'train' and r.random() < 0.5:
+            samples = speed(samples, float(r.uniform(0.8, 1.25)))
         if not dry:
             samples = reverb(samples, r, split, far)
         return samples / (np.sqrt(np.mean(samples * samples)) + 1e-9) * db_to_gain(gain_db)
@@ -248,7 +257,7 @@ def make_scene(category, split, rng):
         names = list(rng.choice([v for v in {t['voice'] for t in inventory()['tts']}], size=count, replace=False))
         voices = [tts_voice(name, gains[i], split) for i, name in enumerate(names)]
     else:
-        far_index = 0 if category == 'far' else -1
+        far_index = 0 if category == 'far' else count - 1 if split == 'train' and count > 1 and rng.random() < 0.25 else -1
         voices = [zeroth_voice(s, gains[i] - (20 if i == far_index else 0), rng, split, far=i == far_index) for i, s in enumerate(speakers)]
     lead = float(rng.uniform(0, 10))
     tail = float(rng.uniform(0, 10))

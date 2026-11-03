@@ -406,7 +406,7 @@ export const TranscribeWorkspace = () => {
         (ratio) => toast.update(TRANSCRIBE_TOAST, { title: '화자 구분 중…', progress: ratio * 100, meta: `${Math.round(ratio * 100)}%` }),
         controller.signal,
       )
-        .then((turns) => {
+        .then(({ turns }) => {
           if (controller.signal.aborted) return;
           console.debug(`[diarize] ${new Set(turns.map((turn) => turn.speaker)).size} speakers, ${turns.length} turns`);
           setSpeakerTurns(turns);

@@ -1,7 +1,10 @@
 import type { SpeakerTurn } from './speakerTurns';
 
-/** ortUrl: onnxruntime-web ES 모듈, wasmBaseUrl: 그 wasm 이 있는 디렉터리(끝에 /), modelUrl: 화자 임베딩 ONNX */
-export type DiarizeRuntime = { ortUrl: string; wasmBaseUrl: string; modelUrl: string };
+/**
+ * ortUrl: onnxruntime-web ES 모듈, wasmBaseUrl: 그 wasm 이 있는 디렉터리(끝에 /), modelUrl: 화자 임베딩 ONNX,
+ * speechModelUrl: 말소리/겹침 분류 ONNX (없으면 voiceDetector 로 창을 고른다)
+ */
+export type DiarizeRuntime = { ortUrl: string; wasmBaseUrl: string; modelUrl: string; speechModelUrl?: string };
 
 /** pcm 은 16 kHz 모노 */
 export type DiarizeRequest = { pcm: Int16Array; runtime: DiarizeRuntime; threads: number };
@@ -20,5 +23,5 @@ export type DiarizeResult = { turns: SpeakerTurn[]; speakers: SpeakerPrint[]; sp
 
 export type DiarizeResponse =
   | { type: 'progress'; ratio: number }
-  | { type: 'done'; turns: SpeakerTurn[] }
+  | { type: 'done'; turns: SpeakerTurn[]; speakers: SpeakerPrint[] }
   | { type: 'error'; message: string };
