@@ -86,13 +86,20 @@ def main():
         return torch.sigmoid(net(torch.from_numpy(piece).unsqueeze(0)))[0].numpy()
 
     results = [(category, chunked_probs(run, mel), speech) for category, mel, speech in validation_scenes()]
+    # 명세 합격 기준(소음 오탐 ≤ 2%, far 놓침 ≤ 5%)을 검증셋에서 지키는 값 중에서만 고른다. 없으면 제약 없이 고른다
+    def admissible(table):
+        return all(table[c][0] <= 0.02 for c in NON_SPEECH if c in table) and table.get('far', (0, 0))[1] <= 0.05
+
     best = None
-    for on in np.arange(0.30, 0.81, 0.05):
+    for on in np.arange(0.30, 0.96, 0.05):
         for off in np.arange(0.20, on + 1e-9, 0.05):
             value, table = score(results, round(float(on), 2), round(float(off), 2))
-            if best is None or value < best[0]:
-                best = (value, round(float(on), 2), round(float(off), 2), table)
-    value, on, off, table = best
+            key = (not admissible(table), value)
+            if best is None or key < best[0]:
+                best = (key, round(float(on), 2), round(float(off), 2), table)
+    (blocked, value), on, off, table = best
+    if blocked:
+        print('no thresholds meet noise fa <= 0.02 and far miss <= 0.05 on val')
     for category, (fa, miss) in sorted(table.items()):
         print(f'{category:18s} fa={fa:.3f} miss={miss:.3f}{"  (non-speech)" if category in NON_SPEECH else ""}')
     print(f'on={on} off={off} objective={value:.4f}')

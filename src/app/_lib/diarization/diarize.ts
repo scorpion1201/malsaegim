@@ -4,7 +4,7 @@
  */
 import { onDeviceThreads } from '@/app/_lib/engine/capabilities';
 import type { ModelManifest } from '@/app/_lib/engine/modelStore';
-import type { DiarizeRequest, DiarizeResponse, DiarizeRuntime } from './diarizeProtocol';
+import type { DiarizeRequest, DiarizeResponse, DiarizeRuntime, SpeakerPrint } from './diarizeProtocol';
 import type { SpeakerTurn } from './speakerTurns';
 
 /** 코어를 다 쓰면 끝난 뒤 편집 화면이 버벅인다 */
@@ -21,7 +21,8 @@ export const speakerRuntimeOf = (manifest: ModelManifest | null): DiarizeRuntime
   const ortUrl = url('ort-js');
   const wasmUrl = url('ort-wasm');
   const modelUrl = url('speaker-model');
-  return ortUrl && wasmUrl && modelUrl ? { ortUrl, wasmBaseUrl: directoryOf(wasmUrl), modelUrl } : null;
+  const speechModelUrl = url('speech-model');
+  return ortUrl && wasmUrl && modelUrl ? { ortUrl, wasmBaseUrl: directoryOf(wasmUrl), modelUrl, ...(speechModelUrl && { speechModelUrl }) } : null;
 };
 
 export const diarizeAudio = (
@@ -29,7 +30,7 @@ export const diarizeAudio = (
   runtime: DiarizeRuntime,
   onProgress: (ratio: number) => void,
   signal: AbortSignal,
-): Promise<SpeakerTurn[]> =>
+): Promise<{ turns: SpeakerTurn[]; speakers: SpeakerPrint[] }> =>
   new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./diarize.worker.ts', import.meta.url), { type: 'module' });
     const finish = () => {
@@ -48,7 +49,7 @@ export const diarizeAudio = (
         return;
       }
       finish();
-      if (message.type === 'done') resolve(message.turns);
+      if (message.type === 'done') resolve({ turns: message.turns, speakers: message.speakers });
       else reject(new Error(message.message));
     };
     worker.onerror = (event) => {

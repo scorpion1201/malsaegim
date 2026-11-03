@@ -19,6 +19,7 @@ const { values: args } = parseArgs({
     limit: { type: 'string' },
     categories: { type: 'string' },
     'self-check': { type: 'boolean' },
+    'chunk-check': { type: 'boolean' },
     compare: { type: 'boolean' },
   },
   allowPositionals: true,
@@ -142,6 +143,39 @@ const compare = () => {
   process.exit(failures.length ? 1 : 0);
 };
 
+// 조각 추론(10초 + 앞뒤 1초)의 경계 민감도 — 모델은 8초 구간을 빈 상태에서 시작하도록 학습해, 비교 기준은 한 번에 넣은 추론이 아니라
+// 조각 격자를 5초 옮긴 추론이다 (옮긴 쪽 처음 2초, 녹음 끝 25프레임 제외). 출력 프레임 수도 확인한다 (길이 20.0초, 20.5초, 9초)
+const chunkCheck = async () => {
+  const { classifyChunks, logMelFrames } = await import('../../src/app/_lib/diarization/speechClassifier.ts');
+  const ort = await import(join(args.models, 'ort.wasm.min.mjs'));
+  ort.env.wasm.wasmPaths = `file://${args.models}/`;
+  ort.env.wasm.numThreads = 1;
+  const session = await loadSession(ort, args['speech-model']);
+  const run = async (logMel, frames) => (await session.run({ logmel: new ort.Tensor('float32', logMel, [1, frames, 80]) })).probs.data;
+  let ok = true;
+  const source = readPcm16(join(args.set, 'n2', '000.wav'));
+  for (const samples of [320_000, 328_000, 144_000]) {
+    const result = await classifyChunks(source.subarray(0, samples), run);
+    const expected = Math.floor((samples - 400) / 160) + 1;
+    ok &&= result.speech.length === expected && result.speech.length === logMelFrames(samples);
+    console.log(`seconds=${(samples / 16000).toFixed(1)} frames=${result.speech.length}/${expected}`);
+  }
+  for (const name of ['n2/000', 'n4/001', 'interrupt-overlap/002', 'far/003']) {
+    const pcm = readPcm16(join(args.set, `${name}.wav`));
+    const base = await classifyChunks(pcm, run);
+    const shifted = await classifyChunks(pcm.subarray(80_000), run);
+    let worst = 0;
+    for (let t = 200; t < shifted.speech.length - 25; t += 1) {
+      worst = Math.max(worst, Math.abs(shifted.speech[t] - base.speech[t + 500]), Math.abs(shifted.overlap[t] - base.overlap[t + 500]));
+    }
+    const pass = worst < 0.02;
+    ok &&= pass;
+    console.log(`${name} seconds=${(pcm.length / 16000).toFixed(1)} shifted_grid_max_diff=${worst.toFixed(4)} ${pass ? 'ok' : 'FAIL'}`);
+  }
+  process.exit(ok ? 0 : 1);
+};
+
 if (args['self-check']) selfCheck();
+else if (args['chunk-check']) await chunkCheck();
 else if (args.compare) compare();
 else await evaluate();
