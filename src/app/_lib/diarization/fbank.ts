@@ -32,8 +32,11 @@ const melFilters = (): Filter[] => {
   });
 };
 
-/** 창 하나(frames × MEL_BINS)의 특징을 만드는 함수를 돌려준다. 내부 버퍼를 재사용하므로 한 스레드에서만 쓴다 */
-export const createFbank = (frames: number): ((pcm: Int16Array, start: number) => Float32Array) => {
+/**
+ * 평균을 빼지 않은 log-mel(frames × MEL_BINS)을 만드는 함수를 돌려준다. start 부터 frames 개 프레임이 pcm 안에 있어야 한다.
+ * 말소리 분류 모델은 이 값을 조각마다 받는다. 내부 버퍼를 재사용하므로 한 스레드에서만 쓴다
+ */
+export const createLogMel = (): ((pcm: Int16Array, start: number, frames: number) => Float32Array) => {
   const window = Float64Array.from({ length: FRAME_SAMPLES }, (_, i) => (0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (FRAME_SAMPLES - 1))) ** 0.85);
   const filters = melFilters();
   const cosines = Float64Array.from({ length: FFT_SIZE / 2 }, (_, i) => Math.cos((2 * Math.PI * i) / FFT_SIZE));
@@ -92,9 +95,18 @@ export const createFbank = (frames: number): ((pcm: Int16Array, start: number) =
     }
   };
 
-  return (pcm, start) => {
+  return (pcm, start, frames) => {
     const out = new Float32Array(frames * MEL_BINS);
     for (let t = 0; t < frames; t += 1) melFrame(pcm, start + t * HOP_SAMPLES, out, t * MEL_BINS);
+    return out;
+  };
+};
+
+/** 화자 임베딩 창 하나(frames × MEL_BINS)의 특징 — log-mel 에서 창의 시간축 평균을 뺀다 */
+export const createFbank = (frames: number): ((pcm: Int16Array, start: number) => Float32Array) => {
+  const logMel = createLogMel();
+  return (pcm, start) => {
+    const out = logMel(pcm, start, frames);
     for (let mel = 0; mel < MEL_BINS; mel += 1) {
       let mean = 0;
       for (let t = 0; t < frames; t += 1) mean += out[t * MEL_BINS + mel];
