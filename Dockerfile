@@ -26,10 +26,11 @@ FROM alpine:3.22 AS fetch
 ARG WITH_MODELS
 RUN apk add --no-cache curl coreutils
 WORKDIR /build
-COPY scripts/models/versions.sh scripts/models/fetch-whisper-models.sh scripts/models/fetch-speaker-model.sh ./scripts/models/
+COPY scripts/models/versions.sh scripts/models/fetch-whisper-models.sh scripts/models/fetch-speaker-model.sh scripts/models/fetch-speech-model.sh ./scripts/models/
 RUN mkdir -p /out && if [ "$WITH_MODELS" = "1" ]; then \
       WORK=/build/work sh scripts/models/fetch-whisper-models.sh /out \
    && WORK=/build/work sh scripts/models/fetch-speaker-model.sh /out \
+   && WORK=/build/work sh scripts/models/fetch-speech-model.sh /out \
    && rm -rf /build/work; fi
 
 # ---------- 3) 엔진 wasm (emscripten + Rust): xtask 가 whisper.cpp 를 클론해 CPU·WebGPU 런타임 두 벌을 만든다 ----------
