@@ -4,7 +4,8 @@ export type MicCapture = {
   /** 실제 AudioContext 샘플레이트 — 16000 이 아니면 호출자가 리샘플한다 */
   sampleRate: number;
   pause: () => void;
-  resume: () => void;
+  /** 다시 받는다. 시스템이 오디오를 끊었으면(iPad·iPhone 에서 화면을 벗어남 등) 컨텍스트를 깨우고, 마이크 트랙이 끝났으면 다시 연다 */
+  resume: () => Promise<void>;
   stop: () => Promise<void>;
 };
 
@@ -136,12 +137,12 @@ export const startMicCapture = async (onSamples: (samples: Float32Array) => void
     throw new Error('이 브라우저나 주소에서는 마이크를 쓸 수 없습니다 (HTTPS 또는 localhost 필요)');
   }
   // 번역 세션은 이미 연 트랙을 복제해 쓴다. 복제본은 일시정지와 정지가 원본과 따로 논다
-  const stream = sharedTrack
+  let stream = sharedTrack
     ? new MediaStream([sharedTrack.clone()])
     : await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS });
   const context = createContext();
   await context.resume();
-  const source = context.createMediaStreamSource(stream);
+  let source = context.createMediaStreamSource(stream);
   // 출력은 내지 않지만 그래프가 돌게 하려고 0 게인으로 destination 에 잇는다
   const sink = context.createGain();
   sink.gain.value = 0;
@@ -200,10 +201,20 @@ export const startMicCapture = async (onSamples: (samples: Float32Array) => void
         track.enabled = false;
       });
     },
-    resume: () => {
+    resume: async () => {
       stream.getAudioTracks().forEach((track) => {
         track.enabled = true;
       });
+      // Safari 는 앱 전환·화면 잠금 때 컨텍스트를 interrupted 로 두고, 트랙을 끝내기도 한다
+      if (context.state !== 'running') await context.resume();
+      const ended = stream.getAudioTracks().every((track) => track.readyState === 'ended');
+      if (ended && !sharedTrack) {
+        const next = await navigator.mediaDevices.getUserMedia({ audio: MIC_AUDIO_CONSTRAINTS });
+        source.disconnect();
+        stream = next;
+        source = context.createMediaStreamSource(stream);
+        source.connect(node);
+      }
       paused = false;
     },
     stop: async () => {

@@ -72,6 +72,32 @@ export const useLiveRecording = (handlers: LiveRecordingHandlers) => {
     [],
   );
 
+  // 녹음하는 동안 화면이 저절로 꺼지지 않게 한다 — iPad·iPhone 은 화면이 꺼지면 마이크가 멈춘다.
+  // 화면을 벗어나면 브라우저가 잠금을 풀므로 돌아올 때 다시 건다. 지원하지 않거나 거절되면 그냥 둔다
+  const holdScreen = status === 'recording' || status === 'paused';
+  useEffect(() => {
+    if (!holdScreen || !('wakeLock' in navigator)) return;
+    let lock: WakeLockSentinel | null = null;
+    let disposed = false;
+    const acquire = () => {
+      if (document.visibilityState !== 'visible') return;
+      navigator.wakeLock
+        .request('screen')
+        .then((sentinel) => {
+          if (disposed) void sentinel.release();
+          else lock = sentinel;
+        })
+        .catch(() => {});
+    };
+    acquire();
+    document.addEventListener('visibilitychange', acquire);
+    return () => {
+      disposed = true;
+      document.removeEventListener('visibilitychange', acquire);
+      void lock?.release().catch(() => {});
+    };
+  }, [holdScreen]);
+
   const start = useCallback(async (projectId: string, sharedTrack?: MediaStreamTrack) => {
     setStatus('starting');
     levelsRef.current = [];
@@ -129,10 +155,11 @@ export const useLiveRecording = (handlers: LiveRecordingHandlers) => {
     setStatus('paused');
   }, []);
 
-  const resume = useCallback(() => {
+  /** 마이크를 다시 열지 못하면(권한 철회 등) 거절된다 — 상태는 녹음으로 돌린다 */
+  const resume = useCallback(async () => {
     if (!captureRef.current) return;
-    captureRef.current.resume();
     setStatus('recording');
+    await captureRef.current.resume();
   }, []);
 
   const stop = useCallback(async (): Promise<LiveRecordingResult> => {

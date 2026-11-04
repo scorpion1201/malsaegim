@@ -37,7 +37,7 @@ import {
 } from '@/app/_lib/editor/projectStore';
 import type { ExportFormat } from '@/app/_lib/hwp/docModel';
 import { normalizePageLayout, type PageLayout } from '@/app/_lib/hwp/pageLayout';
-import { formatMb } from '@/app/_lib/engine/malsaegimEngine';
+import { detectDeviceProfile, formatMb } from '@/app/_lib/engine/malsaegimEngine';
 import { startWhisperLive, whisperBackend, type LiveRecognizer, type LiveRecognizerHandlers } from '@/app/_lib/engine/malsaegimEngine';
 import { ASR_LANGUAGE, isRealtimeTarget } from '@/app/_lib/asr/directTranscribe';
 import { startRealtimeRecognizer } from '@/app/_lib/asr/realtimeRecognizer';
@@ -81,6 +81,8 @@ type RunMode = 'new' | 'retry';
 const TRANSCRIBE_TOAST = 'transcribe';
 const RETRY_TOAST = 'retry';
 const MODEL_TOAST = 'model';
+/** iPad·iPhone 에서 "화면이 보이는 동안만 녹음된다" 안내를 본 적 있는지 */
+const BACKGROUND_NOTICE_KEY = 'malsaegim:background-notice-seen';
 
 type TranslationSession = {
   status: TranslationStatus;
@@ -1506,10 +1508,61 @@ export const TranscribeWorkspace = () => {
   }, [live]);
 
   const resumeRecording = useCallback(() => {
-    live.resume();
+    live.resume().catch(() =>
+      toast.show({ kind: 'error', title: '마이크를 다시 열지 못했습니다', description: '녹음을 중지하고 마이크 권한을 확인해 주세요' }),
+    );
     void translationRef.current?.resume();
     setTranslation((previous) => (previous ? { ...previous, pausedAtMs: null } : previous));
-  }, [live]);
+  }, [live, toast]);
+
+  // iPad·iPhone 의 Safari 는 화면에 보이지 않는 동안 마이크를 막는다(앱 전환·화면 잠금) — 그 사이에도 녹음 중으로 보이면 안 된다.
+  // 화면을 벗어나면 일시정지하고, 돌아오면 마이크를 다시 연결해 이어 녹음한 뒤 녹음되지 않은 시간을 알린다
+  const liveStatusRef = useRef(live.status);
+  useEffect(() => {
+    liveStatusRef.current = live.status;
+  }, [live.status]);
+  const hiddenAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!detectDeviceProfile().ios) return;
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') {
+        if (liveStatusRef.current !== 'recording') return;
+        hiddenAtRef.current = Date.now();
+        pauseRecording();
+        return;
+      }
+      const hiddenAt = hiddenAtRef.current;
+      if (hiddenAt === null) return;
+      hiddenAtRef.current = null;
+      if (liveStatusRef.current !== 'paused') return;
+      resumeRecording();
+      toast.show({
+        kind: 'info',
+        title: `${formatTimestamp(Date.now() - hiddenAt)} 동안 녹음되지 않았습니다`,
+        description: 'iPad·iPhone 의 Safari 는 화면에 보일 때만 마이크를 쓸 수 있어, 다른 앱에 있던 동안은 일시정지했다가 지금 이어서 녹음합니다',
+        duration: 12_000,
+      });
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [pauseRecording, resumeRecording, toast]);
+
+  // iPad·iPhone 에서 처음 녹음할 때 한 번 알린다
+  useEffect(() => {
+    if (live.status !== 'recording' || !detectDeviceProfile().ios) return;
+    try {
+      if (localStorage.getItem(BACKGROUND_NOTICE_KEY)) return;
+      localStorage.setItem(BACKGROUND_NOTICE_KEY, '1');
+    } catch {
+      return;
+    }
+    toast.show({
+      kind: 'info',
+      title: '녹음은 이 화면이 보이는 동안만 됩니다',
+      description: '다른 앱으로 가거나 화면을 잠그면 일시정지되고, 돌아오면 이어서 녹음합니다. 녹음 중에는 화면이 꺼지지 않게 해 둡니다',
+      duration: 10_000,
+    });
+  }, [live.status, toast]);
 
   const speakerIntent = translation?.speaker;
   const toggleSpeaker = useCallback(() => {
