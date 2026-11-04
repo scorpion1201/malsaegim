@@ -175,6 +175,7 @@ export const PlayerBar = forwardRef<PlayerBarHandle, PlayerBarProps>(({ tracks, 
         disabled={!url}
         aria-label={playing ? '일시정지' : '재생'}
         data-tooltip={playing ? '일시정지' : '재생'}
+        data-tooltip-placement="top"
         data-shortcut="Space"
       >
         {playing ? (

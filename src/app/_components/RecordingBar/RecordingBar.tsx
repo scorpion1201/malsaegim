@@ -136,6 +136,7 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
         onClick={onStop}
         aria-label="녹음 중지 · 저장"
         data-tooltip="녹음 중지 · 저장"
+        data-tooltip-placement="top"
         data-shortcut="Esc"
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
@@ -156,6 +157,7 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
             aria-label="번역 음성"
             aria-pressed={speaker.view === 'on'}
             data-tooltip={SPEAKER_TEXT[speaker.view].tooltip}
+            data-tooltip-placement="top"
             data-shortcut="M"
             onClick={(event) => {
               // 포커스를 남기면 M 과 Space 가 버튼에 먹힌다
@@ -180,11 +182,12 @@ export const RecordingBar = ({ elapsedMs, paused, levelsRef, onPause, onResume, 
           else onPause();
         }}
         data-tooltip={paused ? '녹음 계속' : '일시정지'}
+        data-tooltip-placement="top"
         data-shortcut="Space"
       >
         {paused ? '계속' : '일시정지'}
       </button>
-      <button type="button" className={styles.save} onClick={onStop} data-tooltip="녹음을 마치고 노트로 저장">
+      <button type="button" className={styles.save} onClick={onStop} data-tooltip="녹음을 마치고 노트로 저장" data-tooltip-placement="top">
         저장
       </button>
       <span className={styles.hint}>{speaker ? 'Space 일시정지 · M 음성 · Esc 중지' : 'Space 일시정지 · Esc 중지'}</span>

@@ -156,3 +156,15 @@ input {
   transform: translateX(-50%) translateY(0);
   transition-delay: 0.35s;
 }
+
+/* 화면·패널 아래 끝에 붙은 버튼(재생·녹음 막대)은 data-tooltip-placement="top" 으로 위에 띄운다 — 아래로 띄우면 잘린다 */
+[data-tooltip][data-tooltip-placement='top']::after {
+  top: auto;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(2px);
+}
+
+[data-tooltip][data-tooltip-placement='top']:hover::after,
+[data-tooltip][data-tooltip-placement='top']:focus-visible::after {
+  transform: translateX(-50%) translateY(0);
+}
