@@ -34,6 +34,8 @@ const MIN_VOICED_RATIO = 0.6;
 const MAX_OVERLAP_RATIO = 0.1;
 /** 겹침 확률이 이 값 이상인 프레임을 겹침으로 본다 */
 const OVERLAP_THRESHOLD = 0.5;
+/** 겹침이 이 프레임 수(10 ms) 이상 이어져야 겹침 시작으로 친다 — 한두 프레임 튐은 말 차례 경계를 엉뚱하게 옮긴다 */
+const OVERLAP_ONSET_FRAMES = 5;
 const PROGRESS_INTERVAL_MS = 250;
 
 /** 100 ms 프레임별 말소리 여부 */
@@ -111,7 +113,11 @@ export const embedWindows = async (pcm: Int16Array, deps: PipelineDeps, onProgre
     const overlap = Uint8Array.from(probs.overlap, (p) => (p >= OVERLAP_THRESHOLD ? 1 : 0));
     starts = classifiedWindows(pcm.length, speechFrames, overlap);
     cleanFrames = speechFrames.map((value, t) => value & (overlap[t] ^ 1));
-    for (let t = 1; t < overlap.length; t += 1) if (overlap[t] && !overlap[t - 1]) overlapStartsMs.push(t * 10);
+    let run = 0;
+    for (let t = 0; t < overlap.length; t += 1) {
+      run = overlap[t] ? run + 1 : 0;
+      if (run === OVERLAP_ONSET_FRAMES) overlapStartsMs.push((t - OVERLAP_ONSET_FRAMES + 1) * 10);
+    }
   } else {
     const voiced = voiceActivity(pcm);
     starts = speechWindows(pcm, voiced);

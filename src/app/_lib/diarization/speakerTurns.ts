@@ -8,8 +8,14 @@ const SMOOTH_RADIUS = 2;
 const MIN_TURN_MS = 1000;
 /** 조각 안에서 이보다 짧은 화자 구간은 나누지 않는다 — 조각은 쉼에서 잘려 대개 한 사람 말이고, 글자를 시간 비례로 나누는 오차가 이만큼 크다 */
 const MIN_SPAN_MS = 3000;
-/** 화자가 바뀌는 경계에서 이 거리 안에 겹침이 시작되면 경계를 그 시각으로 옮긴다 — 끼어든 사람의 차례는 겹침에서 열린다 */
-const OVERLAP_SNAP_MS = 1000;
+/**
+ * 화자가 바뀌는 경계의 이만큼 앞부터 뒤까지에서 가장 이른 겹침 시작으로 경계를 옮긴다 — 끼어든 사람의 차례는 겹침에서 열린다.
+ * 겹친 창은 묶기에서 빠지므로 경계는 대개 실제보다 늦게 잡힌다. 그래서 앞쪽을 더 넓게 본다 (scripts/diarization 검증셋에서 고른 값)
+ */
+const OVERLAP_SNAP_BEFORE_MS = 1500;
+const OVERLAP_SNAP_AFTER_MS = 300;
+/** 근처에 겹침 시작이 없을 때 경계를 이만큼 앞당긴다 — 같은 늦음을 메운다 */
+const LATE_BOUNDARY_SHIFT_MS = 300;
 /** 나눌 자리를 찾는 범위 — 글자 수 대비 */
 const SNAP_RATIO = 0.2;
 
@@ -45,20 +51,18 @@ const absorbShortTurns = (turns: SpeakerTurn[]): SpeakerTurn[] => {
   return mergeSameSpeaker(kept);
 };
 
-/** 경계마다 가까운 겹침 시작으로 옮긴다. 앞뒤 경계를 넘지 않는다 */
+/** 경계마다 가장 이른 겹침 시작으로 옮기고, 없으면 앞당긴다. 앞뒤 차례를 넘지 않는다. 겹침 정보가 없으면(분류 모델 없음) 그대로 둔다 */
 const snapToOverlaps = (turns: SpeakerTurn[], overlapStartsMs: number[]): SpeakerTurn[] => {
   if (!overlapStartsMs.length) return turns;
   for (let i = 1; i < turns.length; i += 1) {
     const boundary = turns[i].startMs;
-    let best: number | null = null;
-    for (const start of overlapStartsMs) {
-      const distance = Math.abs(start - boundary);
-      if (distance <= OVERLAP_SNAP_MS && (best === null || distance < Math.abs(best - boundary))) best = start;
-    }
-    if (best !== null && best > turns[i - 1].startMs && best < turns[i].endMs) {
-      turns[i - 1].endMs = best;
-      turns[i].startMs = best;
-    }
+    const earliest = overlapStartsMs.find(
+      (start) => start >= boundary - OVERLAP_SNAP_BEFORE_MS && start > turns[i - 1].startMs && start < turns[i].endMs,
+    );
+    const target = earliest !== undefined && earliest <= boundary + OVERLAP_SNAP_AFTER_MS ? earliest : boundary - LATE_BOUNDARY_SHIFT_MS;
+    const moved = Math.max(turns[i - 1].startMs + 1, Math.min(turns[i].endMs - 1, target));
+    turns[i - 1].endMs = moved;
+    turns[i].startMs = moved;
   }
   return turns;
 };
