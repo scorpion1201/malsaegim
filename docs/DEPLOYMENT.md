@@ -136,7 +136,7 @@ docker --context prod image prune -f
 | 스테이지 | 역할 |
 |---|---|
 | `wasm` | 오디오 분할 wasm 빌드 |
-| `fetch` | whisper 모델 내려받기(리비전·sha256 고정) |
+| `fetch` | whisper 모델, 화자 구분 런타임·모델 내려받기(리비전·sha256 고정) |
 | `emsdk` | 엔진 wasm 빌드(CPU·WebGPU 런타임) |
 | `manifest` | 모델 `manifest.json` 생성 |
 | `models` | 모델 산출물만 꺼내기 (`yarn models`) |
@@ -147,7 +147,7 @@ docker --context prod image prune -f
 
 ### 4.2. Network Access
 
-빌드 중에는 crates.io, npm, Google Fonts, wasm-pack 이 받는 wasm-bindgen/binaryen, 모델을 받는 huggingface.co, emscripten `emdawnwebgpu` 포트를 받는 GitHub 릴리스에 접근할 수 있어야 한다. Google Fonts 는 `next/font` 가 IBM Plex Sans KR 을 내려받아 자체 호스팅할 때 쓴다.
+빌드 중에는 crates.io, npm, Google Fonts, wasm-pack 이 받는 wasm-bindgen/binaryen, 모델을 받는 huggingface.co, GitHub 릴리스(emscripten `emdawnwebgpu` 포트, sherpa-onnx 의 CAM++ 화자 모델, 이 저장소 `speech-model-v1` 의 말소리/겹침 분류 모델)에 접근할 수 있어야 한다. 분류 모델 릴리스는 공개라서 토큰이 필요 없다. Google Fonts 는 `next/font` 가 IBM Plex Sans KR 을 내려받아 자체 호스팅할 때 쓴다.
 
 ### 4.3. Build Without Models
 
@@ -155,7 +155,7 @@ docker --context prod image prune -f
 docker build --build-arg WITH_MODELS=0 -t malsaegim .
 ```
 
-모델을 넣으면 이미지가 ≈ 1.1 GB 커진다(Turbo q8_0 ≈ 834 MiB, small q8_0 ≈ 252 MiB, 엔진 wasm 두 벌 ≈ 6 MB, 화자 구분 런타임·모델 ≈ 41 MiB). 서버에는 두 모델이 다 있지만 브라우저는 기기에 맞는 하나만 받는다. `WITH_MODELS=0` 이면 화자 구분도 꺼진다.
+모델을 넣으면 이미지가 ≈ 1.1 GB 커진다(Turbo q8_0 ≈ 834 MiB, small q8_0 ≈ 252 MiB, 엔진 wasm 두 벌 ≈ 6 MB, 화자 구분 런타임·모델 ≈ 42 MiB, 그중 말소리/겹침 분류 모델 0.74 MiB). 서버에는 두 모델이 다 있지만 브라우저는 기기에 맞는 하나만 받는다. `WITH_MODELS=0` 이면 화자 구분도 꺼진다.
 
 ### 4.4. Image Contents
 

@@ -40,3 +40,17 @@ MUSAN 에는 키보드·기침·웃음 표시가 없어 sound-bible 제목(펜 �
 | `build-eval.py` | 고정 평가셋(`eval`)·검증셋(`val`) |
 | `train.py`, `model.py`, `tune-vad.py`, `export.py` | 분류 모델 학습, 판정 문턱, ONNX 내보내기 |
 | `eval.mjs`, `metrics.mjs`, `tune-cluster.mjs` | 앱 파이프라인 평가, 묶기 값 고르기 |
+
+## 재현 순서
+
+`PY="$DATA/venv/bin/python -I -B"`, `EVAL="node --import ./scripts/diarization/ts-loader.mjs scripts/diarization/eval.mjs"` 로 줄여 쓴다. 저장소 루트에서 실행한다.
+
+1. 자료 받기와 분류: `sh scripts/diarization/fetch-data.sh` → `$PY scripts/diarization/inventory.py` (`--summary` 로 숫자 확인).
+2. 평가셋·검증셋: `$PY scripts/diarization/build-eval.py --split test --per-category 50 --out $DATA/eval`, `--split val --per-category 20 --out $DATA/val`.
+3. 기준선: 분류 모델 없이 `$EVAL --set $DATA/eval --label baseline --out $DATA/reports/baseline.json`.
+4. 학습: `$PY scripts/diarization/train.py cache` (학습 장면 6,000개를 log-mel 로 저장) → `$PY scripts/diarization/train.py fit` (검증 손실이 멈추면 끝, `$DATA/ckpt/best.pt`).
+5. 판정 문턱: `$PY scripts/diarization/tune-vad.py --ckpt $DATA/ckpt/best.pt`. 검증셋에서 소음 오탐 ≤ 2%, far 놓침 ≤ 5% 를 지키는 값만 고르고 `$DATA/export/speech-crnn.json` 에 적는다. 앱 값은 `speechClassifier.ts` 의 `SPEECH_THRESHOLDS` 에 옮긴다.
+6. 내보내기: `$PY scripts/diarization/export.py --ckpt $DATA/ckpt/best.pt --check` → `$DATA/export/speech-crnn.onnx`. PyTorch 와 ONNX 출력 차이를 확인한다. 조각 경계 확인은 `$EVAL --chunk-check --set $DATA/eval --speech-model $DATA/export/speech-crnn.onnx`.
+7. 묶기 값: `node --import ./scripts/diarization/ts-loader.mjs scripts/diarization/tune-cluster.mjs --set $DATA/val --speech-model $DATA/export/speech-crnn.onnx` → `clusterSpeakers.ts` 의 `CLUSTER_PARAMS`.
+8. 최종 평가: `$EVAL --set $DATA/eval --label final --speech-model $DATA/export/speech-crnn.onnx --out $DATA/reports/final.json` → `$EVAL --compare $DATA/reports/baseline.json $DATA/reports/final.json`. 마지막 줄이 `all criteria met` 이어야 한다. `tv` 는 정답이 모호해 DER 판정에서 빼고 숫자만 본다.
+9. 배포: 새 이름의 GitHub 릴리스(`speech-model-vN`)에 `speech-crnn.onnx` 를 올리고 `scripts/models/versions.sh` 의 `SPEECH_MODEL_*` 를 바꾼다.
