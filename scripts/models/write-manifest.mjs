@@ -15,12 +15,13 @@ const RUNTIME = [
   { id: 'engine-webgpu-wasm', name: 'malsaegim-engine-webgpu.wasm' },
 ];
 
-// 화자 구분: onnxruntime-web 런타임과 임베딩 모델 — 런타임이 wasm 을 이름으로 찾으므로 한 디렉터리에 둔다
+// 화자 구분: onnxruntime-web 런타임, 임베딩 모델, 말소리/겹침 분류 모델 — 런타임이 wasm 을 이름으로 찾으므로 한 디렉터리에 둔다
 const SPEAKER = [
   { id: 'ort-js', name: 'ort.wasm.min.mjs' },
   { id: 'ort-wasm-js', name: 'ort-wasm-simd-threaded.mjs' },
   { id: 'ort-wasm', name: 'ort-wasm-simd-threaded.wasm' },
   { id: 'speaker-model', name: 'speaker-campplus.onnx' },
+  { id: 'speech-model', name: 'speech-crnn.onnx' },
 ];
 
 // tier: full = PC·고사양 기기 기본, lite = 메모리가 부족한 기기 기본 (src/app/_lib/engine/deviceProfile.ts)

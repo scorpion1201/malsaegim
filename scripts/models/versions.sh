@@ -13,6 +13,10 @@ WHISPER_SMALL_SHA256=49c8fb02b65e6049d5fa6c04f81f53b867b5ec9540406812c643f177317
 SPEAKER_MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx
 SPEAKER_MODEL_FILE=speaker-campplus.onnx
 SPEAKER_MODEL_SHA256=aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2
+# 화자 구분 앞단: 말소리/겹침 분류 모델 (자체 학습, scripts/diarization, 776,967 B)
+SPEECH_MODEL_URL=https://github.com/scorpion1201/malsaegim/releases/download/speech-model-v1/speech-crnn.onnx
+SPEECH_MODEL_FILE=speech-crnn.onnx
+SPEECH_MODEL_SHA256=3acd01abf5317ec816256771b1b3ead4316f1baadf684d11ea1886e6f0ff00be
 # 화자 구분 런타임: onnxruntime-web (MIT). 앱 번들에 넣지 않고 npm 배포본에서 wasm 런타임 파일만 꺼낸다
 ORT_WEB_VERSION=1.31.1
 ORT_WEB_SHA256=bdccdb9fbb9ab537247c0c734e9b1d2b1b338b4f2a09faa58f0dc1cfa27c312c
