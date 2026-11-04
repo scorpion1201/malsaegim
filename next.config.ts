@@ -1,4 +1,5 @@
 import type { NextConfig } from 'next';
+import { version } from './package.json';
 
 /** On-Device 인식(wasm 스레드 = SharedArrayBuffer)에 필요한 교차 출처 격리. 폰트·로고·wasm 은 자체 서빙이고
  *  BYOK 호출은 서버 pass-through, 실시간 번역은 CORS 를 여는 OpenAI 와 WebRTC 직결이라 깨지는 리소스가 없다.
@@ -44,6 +45,8 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   output: 'standalone',
+  // 화면에 보이는 앱 버전 — package.json 에서 빌드할 때 넣는다. 비밀이 아니라 클라이언트에 공개한다
+  env: { NEXT_PUBLIC_APP_VERSION: version },
   serverExternalPackages: ['@rhwp/core'],
   outputFileTracingIncludes: {
     '/api/export': ['./node_modules/@rhwp/core/**/*'],

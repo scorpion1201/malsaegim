@@ -555,6 +555,16 @@
   color: var(--muted);
 }
 
+/* 사이드바 맨 아래 앱 버전 — 노트 목록 밑에 작게 둬 작업을 가리지 않는다 */
+.version {
+  margin: 0;
+  padding: 6px 24px 14px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
 .projectList {
   flex: 1;
   display: flex;

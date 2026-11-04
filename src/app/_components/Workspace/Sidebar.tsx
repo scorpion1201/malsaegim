@@ -442,6 +442,8 @@ export const Sidebar = forwardRef<SidebarHandle, SidebarProps>(
           )}
         </div>
 
+        <p className={styles.version}>v{process.env.NEXT_PUBLIC_APP_VERSION}</p>
+
         {speakerHint ? (
           <div className={styles.speakerHint} role="status">
             <span className={styles.speakerHintIcon}>
