@@ -1,7 +1,7 @@
 'use client';
 
 import { useSyncExternalStore } from 'react';
-import { formatMb, readGpuPreference, subscribeGpuPreference, writeGpuPreference, type DeviceKind, type WhisperModel } from '@/app/_lib/engine/malsaegimEngine';
+import { formatMb, readGpuPreference, resolveModel, subscribeGpuPreference, writeGpuPreference, type DeviceKind, type WhisperModel } from '@/app/_lib/engine/malsaegimEngine';
 import { useDialog } from '../Dialog/DialogProvider';
 import { CheckIcon, ChipIcon, CrossIcon, DownloadIcon } from '../OnDevice/icons';
 import { useModelDownload, type ModelStatus } from '../OnDevice/ModelProvider';
@@ -47,7 +47,9 @@ export const OnDeviceModelCard = () => {
   const choose = async (choice: string) => {
     if (choice === model.choice) return;
     const current = model.status === 'ready' && model.selected ? model.selected : null;
-    if (current) {
+    // 자동과 직접 고른 모델이 같은 모델로 정해지면 내려받을 것도 지울 것도 없다 — 선택만 바꾼다
+    const target = model.manifest && model.device ? resolveModel(model.manifest, choice, model.device) : null;
+    if (current && target?.id !== current.id) {
       const ok = await dialog.confirm({
         title: '모델을 바꿀까요?',
         description: `새 모델을 내려받아야 합니다. 새 모델을 다 받으면 지금 모델(${current.label}, 약 ${formatMb(current.file.bytes)} MB)은 삭제됩니다.`,
