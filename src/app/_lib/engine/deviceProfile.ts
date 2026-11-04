@@ -1,7 +1,7 @@
 /**
  * 기기 종류와 On-Device 기본 모델. 브라우저는 RAM 용량을 정확히 알려 주지 않으므로 여러 신호를 함께 본다.
  *  - PC: Turbo
- *  - iPad: Turbo (iPad Pro M1 처럼 RAM 이 넉넉한 기종이 많다. 칩·RAM 은 웹에서 알 수 없어 로딩 실패 시 small 로 바꾸도록 안내)
+ *  - iPad: Turbo, CPU 로만 (Safari 탭 메모리는 RAM 과 관계없이 약 2 GB 라 WebGPU 로 가중치를 한 벌 더 올리면 넘는다)
  *  - 휴대폰·태블릿(Android 등): navigator.deviceMemory 가 8 이상이면 Turbo, 낮거나 알 수 없으면(iPhone 포함) small
  * 사용자는 설정에서 언제든 바꿀 수 있다 (modelChoice).
  */
@@ -12,6 +12,8 @@ export type DeviceProfile = {
   kind: DeviceKind;
   /** navigator.deviceMemory (GB, Chromium 계열만, 최대 8 로 잘린다). 모르면 null */
   memoryGb: number | null;
+  /** iOS·iPadOS (모든 브라우저가 WebKit) — 탭 메모리가 기기 RAM 과 관계없이 약 2 GB 로 묶이고 GPU 버퍼도 여기에 들어간다 */
+  ios: boolean;
   /** 판정 근거 — 디버그·설정 안내용 */
   signals: string[];
 };
@@ -30,7 +32,7 @@ type NavigatorExtras = Navigator & {
 type MotionEventCtor = { requestPermission?: () => Promise<string> };
 
 export const detectDeviceProfile = (): DeviceProfile => {
-  if (typeof navigator === 'undefined' || typeof window === 'undefined') return { kind: 'desktop', memoryGb: null, signals: ['ssr'] };
+  if (typeof navigator === 'undefined' || typeof window === 'undefined') return { kind: 'desktop', memoryGb: null, ios: false, signals: ['ssr'] };
   const nav = navigator as NavigatorExtras;
   const ua = nav.userAgent;
   const memoryGb = typeof nav.deviceMemory === 'number' ? nav.deviceMemory : null;
@@ -59,7 +61,7 @@ export const detectDeviceProfile = (): DeviceProfile => {
   if (ios) {
     const tablet = /iPad/.test(ua) || (!/iPhone|iPod/.test(ua) && shortSide >= IPAD_MIN_SHORT_SIDE);
     signals.push(`short-side-${shortSide}`);
-    return { kind: tablet ? 'ipad' : 'mobile', memoryGb, signals };
+    return { kind: tablet ? 'ipad' : 'mobile', memoryGb, ios: true, signals };
   }
 
   const uaMobile = nav.userAgentData?.mobile === true || /Android|Mobi|Opera Mini|IEMobile/i.test(ua);
@@ -69,7 +71,7 @@ export const detectDeviceProfile = (): DeviceProfile => {
   if (touchOnly) signals.push('touch-only-small');
   const android = /Android/i.test(ua) || nav.userAgentData?.platform === 'Android';
   if (android) signals.push('android');
-  return { kind: uaMobile || touchOnly || android ? 'mobile' : 'desktop', memoryGb, signals };
+  return { kind: uaMobile || touchOnly || android ? 'mobile' : 'desktop', memoryGb, ios: false, signals };
 };
 
 /** 이 기기에 기본으로 줄 모델 등급 */

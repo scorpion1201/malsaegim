@@ -46,6 +46,7 @@ We keep two runtimes because ASYNCIFY instruments the whole module and slows the
 - **Language:** The app always passes `ko`. Auto-detection drifts to other languages on short windows.
 - **Heap vs file:** The file size isn't the memory cost. Turbo's weights take 874 MB, and the KV cache plus compute buffers add about 400 MB (encode buffer 212 MB). The heap reaches 1,667 MB under the 2 GB `MAXIMUM_MEMORY`, so the limit stays at 2 GB. With WebGPU, the weights live in GPU buffers.
 - **Device choice:** `deviceProfile.ts` combines the Apple platform, touch points, iOS-only APIs, screen size, pointer media queries, and `navigator.deviceMemory`. A user agent alone can't separate iPadOS from macOS. Browsers don't expose RAM size, and iOS doesn't expose `deviceMemory`, so iPads get Turbo and iPhones get small. Users can override the choice in settings.
+- **iOS and iPadOS:** Every browser there is WebKit, and a Safari tab is killed at about 2 GB (iOS 27.2 logs show `Memory Limits: active 2048`), whatever the device RAM. GPU buffers count against the same limit. In WebKit 27.2 on a Mac, Turbo on CPU peaks at 1,687 MB for the page process. On WebGPU it reaches 2,058 MB right after loading and then aborts with a queue timeout, so the app never uses WebGPU on iOS. Turbo on CPU is slow there: 30 s of audio took 90 s with 8 threads and 154 s with 4 threads on an M1 Max, and an iPad Pro M1 (4 performance cores) is slower than that.
 
 ### 2.1. Download and Cache
 

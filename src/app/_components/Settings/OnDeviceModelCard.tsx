@@ -160,13 +160,16 @@ export const OnDeviceModelCard = () => {
       <label className={styles.modelChoice}>
         <input
           type="checkbox"
-          checked={gpu}
+          checked={gpu && !model.device?.ios}
+          disabled={model.device?.ios}
           onChange={(event) => writeGpuPreference(event.target.checked)}
         />
         <span className={styles.modelChoiceText}>
           <span className={styles.modelChoiceName}>WebGPU 가속 (실험적)</span>
           <span className={styles.modelChoiceSub}>
-            브라우저가 WebGPU(shader-f16)를 지원하면 GPU 로 인식합니다. 쓸 수 없거나 실패하면 자동으로 CPU 로 돌아갑니다.
+            {model.device?.ios
+              ? 'iPad·iPhone 은 탭 메모리가 약 2 GB 로 정해져 있어 GPU 에 모델을 한 벌 더 올리면 탭이 종료됩니다. 이 기기에서는 CPU 로 인식합니다.'
+              : '브라우저가 WebGPU(shader-f16)를 지원하면 GPU 로 인식합니다. 쓸 수 없거나 실패하면 자동으로 CPU 로 돌아갑니다.'}
           </span>
         </span>
       </label>

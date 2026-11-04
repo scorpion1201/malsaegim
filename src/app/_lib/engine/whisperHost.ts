@@ -3,6 +3,7 @@
  * 둘은 화면에서 동시에 돌지 않지만, 순서가 겹쳐도 워커가 메시지를 하나씩 처리하므로 안전하다.
  * 인식은 워커 안에서 동기로 돌아 중간에 끊을 수 없다 — 취소는 결과를 버리거나(실시간) 워커를 내린다(파일 전사).
  */
+import { detectDeviceProfile } from './deviceProfile';
 import { deleteCachedFile, runtimeFile, type ModelBundle } from './modelStore';
 import type { LoadFailure, WhisperBackend, WhisperRequest, WhisperResponse } from './whisperProtocol';
 
@@ -105,10 +106,14 @@ export const writeGpuPreference = (enabled: boolean): void => {
   shutdownWhisperWorker();
 };
 
-/** WebGPU 를 먼저 쓸지 — 설정이 켜져 있고, 브라우저에 WebGPU 가 있고, WebGPU 런타임이 배포됐고, 이 탭에서 실패한 적이 없을 때 */
+/**
+ * WebGPU 를 먼저 쓸지 — 설정이 켜져 있고, 브라우저에 WebGPU 가 있고, WebGPU 런타임이 배포됐고, 이 탭에서 실패한 적이 없을 때.
+ * iOS·iPadOS 는 쓰지 않는다: GPU 버퍼도 탭 메모리 한도(약 2 GB)에 들어가 Turbo 가중치를 GPU 에 올리면 탭이 종료된다
+ */
 const wantsGpu = (bundle: ModelBundle): boolean =>
   !gpuFailed &&
   readGpuPreference() &&
+  !detectDeviceProfile().ios &&
   typeof navigator !== 'undefined' &&
   'gpu' in navigator &&
   runtimeFile(bundle, 'engine-webgpu-js') !== undefined;
