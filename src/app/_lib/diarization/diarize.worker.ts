@@ -52,6 +52,8 @@ const diarize = async ({ pcm, runtime, threads }: DiarizeRequest) => {
     },
     (ratio) => post({ type: 'progress', ratio }),
   );
+  const cleanMs = speakers.map((speaker) => speaker.cleanSpans.reduce((sum, span) => sum + span.endMs - span.startMs, 0));
+  console.debug(`[diarize] ${speakers.length} speakers, clean ms ${cleanMs.join(' ')}`);
   post({ type: 'done', turns, speakers });
 };
 
