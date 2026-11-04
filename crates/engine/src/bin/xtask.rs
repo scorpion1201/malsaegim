@@ -34,6 +34,25 @@ fn ensure_checkout(dir: &Path, url: &str, git_ref: &str) {
     );
 }
 
+/// crates/engine/patches/*.patch 를 이름 순서로 whisper.cpp 에 적용한다. 이미 적용된 패치는 건너뛴다
+fn apply_patches(dir: &Path) {
+    let patches = Path::new(env!("CARGO_MANIFEST_DIR")).join("patches");
+    let Ok(entries) = std::fs::read_dir(&patches) else { return };
+    let mut files: Vec<PathBuf> = entries.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "patch")).collect();
+    files.sort();
+    for patch in files {
+        let applied = Command::new("git")
+            .args(["apply", "--reverse", "--check"])
+            .arg(&patch)
+            .current_dir(dir)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !applied {
+            run(&format!("patch {}", patch.display()), Command::new("git").arg("apply").arg(&patch).current_dir(dir));
+        }
+    }
+}
+
 fn rel() -> PathBuf {
     PathBuf::from("target").join(TARGET).join("release")
 }
@@ -115,6 +134,8 @@ fn main() {
         ensure_checkout(&d, "https://github.com/ggml-org/whisper.cpp", WHISPER_CPP_REF);
         d
     });
+    // ggml 그래프 순회를 반복문으로 — 재귀가 깊어 WebKit 워커 스택이 넘친다 (iPad·Safari 에서 Turbo 로드 실패)
+    apply_patches(&whisper);
 
     build_whisper(&out, whisper.to_str().unwrap(), false);
     build_whisper(&out, whisper.to_str().unwrap(), true);

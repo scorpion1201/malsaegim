@@ -39,9 +39,13 @@ class LoadError extends Error {
   }
 }
 
-/** wasm 메모리를 늘리지 못한 경우 — emscripten 은 abort 메시지나 RangeError 로 알린다 */
+/**
+ * wasm 메모리를 늘리지 못한 경우 — emscripten 은 abort 메시지나 RangeError 로 알린다.
+ * 콜 스택 초과도 RangeError 지만 메모리 문제가 아니다 — 메모리 부족 안내(small 로 바꾸라는)를 띄우지 않는다
+ */
 const isMemoryError = (error: unknown): boolean =>
-  error instanceof RangeError || /out of memory|OOM|Cannot enlarge memory|could not allocate memory|Array buffer allocation/i.test(String(error));
+  !/call stack/i.test(String(error)) &&
+  (error instanceof RangeError || /out of memory|OOM|Cannot enlarge memory|could not allocate memory|Array buffer allocation/i.test(String(error)));
 
 let whisper: WhisperModule | null = null;
 let backend: WhisperBackend = 'cpu';

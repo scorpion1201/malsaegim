@@ -186,6 +186,10 @@ k-quants such as q6_k fail to load in both wasm and native builds. The whisper.c
 
 ggml defaults to JSPI (`GGML_WEBGPU_JSPI=ON`), which only Chromium ships. The build turns it off so that Safari, including iPad, can run the WebGPU runtime. ASYNCIFY requires every call into the module to be `ccall(..., { async: true })`, and the worker serializes its messages.
 
+### 6.5. Walk the ggml Graph Without Recursion
+
+ggml builds compute graphs with `ggml_visit_parents_graph`, which calls itself once per node in a dependency chain. WebKit worker threads have a smaller native stack than Chromium's, so loading Turbo (32 encoder layers) failed with `RangeError: Maximum call stack size exceeded` in Safari and on iPad, while small (12 layers) loaded. `crates/engine/patches/ggml-iterative-graph-walk.patch` replaces it with a loop over an explicit stack that keeps the same visit order, use counts and compute flags. Native whisper-cli built with and without the patch gives identical transcripts and compute buffer sizes for Turbo and small. xtask applies every patch in `crates/engine/patches/` after the checkout and skips patches that are already applied.
+
 ## 7. Gotchas
 
 - **Artifact file names:** Serve them unchanged. emcc references these names internally, and pthread workers load the same file again.
