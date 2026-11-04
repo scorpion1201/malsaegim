@@ -191,3 +191,58 @@ ggml defaults to JSPI (`GGML_WEBGPU_JSPI=ON`), which only Chromium ships. The bu
 - **Artifact file names:** Serve them unchanged. emcc references these names internally, and pthread workers load the same file again.
 - **whisper context:** Keep `flash_attn=false`. It hangs on wasm ggml-cpu.
 - **Timings:** The shim prints `whisper_print_timings` after each call. The worker logs it with `console.debug` for encode and decode measurements.
+
+## 8. Speaker Diarization Models
+
+Speaker diarization runs on onnxruntime-web, not on the whisper engine. Its files live in `/models/speaker/<hash>/`, and the manifest lists them under `speaker.files`.
+
+| Model | File | Bytes | Role |
+|---|---|---|---|
+| 3D-Speaker CAM++ (Apache-2.0, sherpa-onnx ONNX export) | `speaker-campplus.onnx` | 28,281,164 | 192-dim speaker embedding per 1.5 s window |
+| Speech/overlap TCN (trained in this repo) | `speech-crnn.onnx` | 776,967 | Speech and overlap probability per 10 ms frame |
+
+- **Source:** `scripts/models/versions.sh` pins the URL and sha256 of both models. The speech model is published as the `speech-model-v1` release of this repository.
+- **Training:** `scripts/diarization` builds failure-case scenes, trains, picks thresholds, exports and evaluates. Data and checkpoints stay outside the repository. See `scripts/diarization/README.md`.
+
+### 8.1. Training Data
+
+| Data | License | Use |
+|---|---|---|
+| Zeroth Korean (`kresnik/zeroth_korean`) | CC BY 4.0 | Speaker voices, split by speaker into train 75%, validation 10%, evaluation 15% |
+| MUSAN noise and music (OpenSLR 17) | Per-file check; files with non-commercial terms are excluded | Noise and music |
+| Synthetic noise | Generated | Mains hum, pink and brown noise, key clicks, impulsive bursts |
+| Empty-room recordings (Mac built-in microphone) | Own recording | Room noise |
+| macOS Korean TTS, 9 voices | Generated locally | Evaluation only |
+
+No AI Hub data is used.
+
+### 8.2. Results (2026-11-04)
+
+Failure-case evaluation set, 22 categories × 50 scenes, app pipeline in Node (onnxruntime-web, 1 thread). Baseline is the previous pipeline (energy voice detector, previous clustering values). DER uses a 0.25 s collar. The interrupt boundary is the median distance from each interruption to the nearest turn boundary.
+
+| Category | DER | False alarm | Miss | Count exact | Count ±1 | Single split | Interrupt boundary (ms) |
+|---|---|---|---|---|---|---|---|
+| backchannel | 0.068 → 0.013 | 0.155 → 0.006 | 0.019 → 0.046 | 0.80 → 0.98 | 1.00 → 1.00 | 0.20 → 0.02 | — |
+| cough-laugh | 0.074 → 0.043 | 0.128 → 0.008 | 0.025 → 0.026 | 0.70 → 0.90 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| dominant | 0.104 → 0.024 | 0.123 → 0.005 | 0.024 → 0.030 | 0.60 → 0.90 | 0.94 → 1.00 | 0.00 → 0.00 | — |
+| empty-room | — | 0.012 → 0.000 | — | 1.00 → 1.00 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| fan | — | 0.134 → 0.000 | — | 1.00 → 1.00 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| far | 0.096 → 0.050 | 0.138 → 0.009 | 0.042 → 0.048 | 0.56 → 0.86 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| interrupt-cut | 0.071 → 0.063 | 0.107 → 0.009 | 0.038 → 0.029 | 0.88 → 0.92 | 1.00 → 1.00 | 0.00 → 0.00 | 567 → 481 |
+| interrupt-overlap | 0.102 → 0.066 | 0.120 → 0.013 | 0.042 → 0.027 | 0.74 → 0.98 | 0.98 → 1.00 | 0.00 → 0.00 | 605 → 438 |
+| keyboard | — | 0.138 → 0.000 | — | 1.00 → 1.00 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| level-jump | 0.091 → 0.061 | 0.127 → 0.011 | 0.029 → 0.035 | 0.74 → 0.82 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| music | — | 0.337 → 0.017 | — | 0.84 → 1.00 | 0.84 → 1.00 | 0.00 → 0.00 | — |
+| n2 | 0.048 → 0.036 | 0.107 → 0.007 | 0.024 → 0.029 | 0.84 → 0.94 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| n3 | 0.100 → 0.057 | 0.112 → 0.011 | 0.027 → 0.032 | 0.60 → 0.88 | 0.98 → 1.00 | 0.00 → 0.00 | — |
+| n4 | 0.173 → 0.053 | 0.117 → 0.010 | 0.027 → 0.030 | 0.40 → 0.88 | 0.90 → 1.00 | 0.00 → 0.00 | — |
+| n5 | 0.226 → 0.066 | 0.111 → 0.008 | 0.028 → 0.031 | 0.10 → 0.72 | 0.54 → 0.98 | 0.00 → 0.00 | — |
+| n6 | 0.321 → 0.062 | 0.114 → 0.009 | 0.027 → 0.034 | 0.06 → 0.66 | 0.22 → 0.98 | 0.00 → 0.00 | — |
+| one-pause | 0.118 → 0.009 | 0.081 → 0.002 | 0.020 → 0.036 | 0.62 → 1.00 | 1.00 → 1.00 | 0.38 → 0.00 | — |
+| overlap-start | 0.241 → 0.232 | 0.104 → 0.012 | 0.044 → 0.034 | 0.90 → 0.92 | 1.00 → 1.00 | 0.00 → 0.00 | — |
+| short-tail | 0.128 → 0.010 | 0.100 → 0.002 | 0.026 → 0.036 | 0.66 → 0.98 | 1.00 → 1.00 | 0.34 → 0.02 | — |
+| similar-voice | 0.074 → 0.043 | 0.116 → 0.011 | 0.025 → 0.034 | 0.68 → 0.92 | 1.00 → 0.98 | 0.00 → 0.00 | — |
+| tts | 0.200 → 0.159 | 0.134 → 0.001 | 0.007 → 0.088 | 0.52 → 0.74 | 0.92 → 0.96 | 0.00 → 0.00 | — |
+| tv | 0.399 → 0.796 | 0.521 → 0.814 | 0.046 → 0.006 | 0.52 → 0.26 | 1.00 → 0.88 | 0.00 → 0.00 | — |
+
+Realtime factor (Node, 1 thread): 0.0377 → 0.0358.
